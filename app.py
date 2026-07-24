@@ -3,7 +3,87 @@ import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
  
-st.set_page_config(page_title="AI Civil Designer", layout="wide")
+st.set_page_config(page_title="AI Civil Designer", page_icon="⛭", layout="wide")
+ 
+# =========================================================
+# PROFESSIONAL THEME (CSS)
+# =========================================================
+st.markdown("""
+<style>
+    @import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap');
+ 
+    html, body, [class*="css"]  {
+        font-family: 'Inter', sans-serif;
+    }
+ 
+    .main {
+        background-color: #f7f8fa;
+    }
+ 
+    h1 {
+        font-weight: 700;
+        color: #1c2b3a;
+        letter-spacing: -0.5px;
+    }
+ 
+    h2, h3 {
+        font-weight: 600;
+        color: #263544;
+    }
+ 
+    [data-testid="stSidebar"] {
+        background-color: #1c2b3a;
+    }
+    [data-testid="stSidebar"] * {
+        color: #e8ecf1 !important;
+    }
+    [data-testid="stSidebar"] .stSelectbox label, 
+    [data-testid="stSidebar"] .stSlider label,
+    [data-testid="stSidebar"] .stNumberInput label {
+        color: #a9b8c7 !important;
+        font-size: 0.85rem;
+        font-weight: 500;
+    }
+ 
+    div[data-testid="stMetric"] {
+        background-color: #ffffff;
+        border: 1px solid #e2e6ea;
+        border-radius: 8px;
+        padding: 14px 18px;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    div[data-testid="stMetricLabel"] {
+        color: #64748b;
+        font-weight: 500;
+    }
+    div[data-testid="stMetricValue"] {
+        color: #1c2b3a;
+        font-weight: 700;
+    }
+ 
+    .stButton > button {
+        background-color: #2563eb;
+        color: white;
+        border: none;
+        border-radius: 6px;
+        font-weight: 600;
+        letter-spacing: 0.2px;
+    }
+    .stButton > button:hover {
+        background-color: #1d4ed8;
+        color: white;
+    }
+ 
+    .stTabs [data-baseweb="tab"] {
+        font-weight: 500;
+        color: #475569;
+    }
+ 
+    div[data-testid="stCaptionContainer"] {
+        color: #64748b;
+    }
+</style>
+""", unsafe_allow_html=True)
  
 # =========================================================
 # SOIL DATABASE
@@ -31,9 +111,9 @@ SOIL_DB = {
 }
  
 STRUCT_COLOR = {
-    "RC Frame": "#8c9aa8",
-    "Shear Wall System": "#4a7fb5",
-    "Steel Frame": "#d98f3b",
+    "RC Frame": "#c9c4b8",
+    "Shear Wall System": "#7c92a8",
+    "Steel Frame": "#9a8168",
 }
  
 # =========================================================
@@ -155,9 +235,25 @@ def make_box_mesh(x0, y0, z0, dx, dy, dz, color, opacity=1.0):
     return go.Mesh3d(
         x=x, y=y, z=z, i=i, j=j, k=k, color=color, opacity=opacity,
         flatshading=True, showscale=False,
-        lighting=dict(ambient=0.55, diffuse=0.85, specular=0.4, roughness=0.4, fresnel=0.2),
-        lightposition=dict(x=200, y=200, z=400),
+        lighting=dict(ambient=0.65, diffuse=0.65, specular=0.15, roughness=0.7, fresnel=0.05),
+        lightposition=dict(x=200, y=200, z=500),
     )
+ 
+ 
+def make_box_edges(x0, y0, z0, dx, dy, dz, line_color="#3a3a3a"):
+    """Wireframe outline of a box so floors read as a structure, not a solid block."""
+    corners = [
+        (x0, y0, z0), (x0+dx, y0, z0), (x0+dx, y0+dy, z0), (x0, y0+dy, z0),
+        (x0, y0, z0+dz), (x0+dx, y0, z0+dz), (x0+dx, y0+dy, z0+dz), (x0, y0+dy, z0+dz),
+    ]
+    edges = [(0,1),(1,2),(2,3),(3,0),(4,5),(5,6),(6,7),(7,4),(0,4),(1,5),(2,6),(3,7)]
+    xs, ys, zs = [], [], []
+    for a, b in edges:
+        xs += [corners[a][0], corners[b][0], None]
+        ys += [corners[a][1], corners[b][1], None]
+        zs += [corners[a][2], corners[b][2], None]
+    return go.Scatter3d(x=xs, y=ys, z=zs, mode="lines",
+                         line=dict(color=line_color, width=2), showlegend=False, hoverinfo="skip")
  
  
 def ground_plane_traces(length, width, soil_color):
@@ -176,15 +272,14 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
     ground = ground_plane_traces(length, width, soil_color)
  
     frames = []
-    max_traces = len(ground) + floors * len(footprint)
- 
     for f in range(1, floors + 1):
         frame_data = list(ground)
         for lvl in range(f):
             z0 = lvl * floor_height
-            opacity = 0.97 if lvl == f - 1 else 0.8
+            opacity = 1.0 if lvl == f - 1 else 0.88
             for (x0, y0, dx, dy) in footprint:
-                frame_data.append(make_box_mesh(x0, y0, z0, dx, dy, floor_height * 0.92, color, opacity))
+                frame_data.append(make_box_mesh(x0, y0, z0, dx, dy, floor_height * 0.94, color, opacity))
+                frame_data.append(make_box_edges(x0, y0, z0, dx, dy, floor_height * 0.94))
         frames.append(go.Frame(data=frame_data, name=str(f)))
  
     fig = go.Figure(data=frames[-1].data, frames=frames)
@@ -192,20 +287,24 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
         scene=dict(
             xaxis_title="Length (m)", yaxis_title="Width (m)", zaxis_title="Height (m)",
             aspectmode="data",
-            camera=dict(eye=dict(x=1.6, y=1.6, z=1.1)),
-            xaxis=dict(backgroundcolor="rgb(235,240,245)"),
-            yaxis=dict(backgroundcolor="rgb(235,240,245)"),
-            zaxis=dict(backgroundcolor="rgb(245,248,250)"),
+            dragmode="orbit",
+            camera=dict(eye=dict(x=1.5, y=1.5, z=0.9)),
+            xaxis=dict(backgroundcolor="rgb(247,248,250)", gridcolor="rgb(225,228,232)"),
+            yaxis=dict(backgroundcolor="rgb(247,248,250)", gridcolor="rgb(225,228,232)"),
+            zaxis=dict(backgroundcolor="rgb(250,251,252)", gridcolor="rgb(225,228,232)"),
         ),
+        font=dict(family="Inter, sans-serif", color="#334155", size=11),
         margin=dict(l=0, r=0, t=10, b=0),
-        height=600,
+        height=620,
         paper_bgcolor="rgba(0,0,0,0)",
         updatemenus=[dict(
-            type="buttons", showactive=False, y=0, x=0, xanchor="left", yanchor="bottom",
+            type="buttons", showactive=False, y=0.02, x=0.01, xanchor="left", yanchor="bottom",
+            bgcolor="#ffffff", bordercolor="#cbd5e1", borderwidth=1,
+            font=dict(size=11, color="#334155"),
             buttons=[
-                dict(label="▶ Build Animation", method="animate",
-                     args=[None, {"frame": {"duration": 450, "redraw": True}, "fromcurrent": True, "transition": {"duration": 200}}]),
-                dict(label="⟲ Reset", method="animate",
+                dict(label="Build sequence", method="animate",
+                     args=[None, {"frame": {"duration": 500, "redraw": True}, "fromcurrent": True, "transition": {"duration": 250}}]),
+                dict(label="Reset", method="animate",
                      args=[[frames[0].name], {"frame": {"duration": 0, "redraw": True}, "mode": "immediate"}]),
             ]
         )],
@@ -315,8 +414,13 @@ def build_section_view(width, floors, foundation_type, depth, soil_name, groundw
 # UI
 # =========================================================
  
-st.title("🏗️ AI Civil Designer")
-st.caption("Conceptual foundation & layout recommendations based on site conditions")
+st.title("AI Civil Designer")
+st.markdown(
+    "<p style='color:#64748b; margin-top:-10px; font-size:1.05rem;'>"
+    "Conceptual foundation, structural system, and layout recommendations based on site conditions"
+    "</p>", unsafe_allow_html=True
+)
+st.markdown("<hr style='margin-top:0.4rem; margin-bottom:1.4rem; border-color:#e2e6ea;'>", unsafe_allow_html=True)
  
 with st.sidebar:
     st.header("Site & Building Inputs")
@@ -352,8 +456,17 @@ if run:
     st.subheader("Conceptual 3D Model")
     chosen_shape = st.selectbox("Preview shape", result["shapes"], key="shape_preview")
     fig3d = build_3d_animated_figure(chosen_shape, length, width, floors, result["structural_system"], soil_color)
-    st.plotly_chart(fig3d, use_container_width=True)
-    st.caption("Click **▶ Build Animation** (bottom-left of the chart) to watch the building rise floor by floor. Drag to rotate, scroll to zoom.")
+    st.plotly_chart(
+        fig3d,
+        use_container_width=True,
+        config={
+            "displayModeBar": True,
+            "displaylogo": False,
+            "modeBarButtonsToRemove": ["resetCameraDefault3d", "hoverClosest3d", "tableRotation"],
+            "scrollZoom": True,
+        },
+    )
+    st.caption("Drag with your cursor to rotate the model, scroll to zoom, and use **Build sequence** (bottom-left) to animate construction floor by floor.")
  
     st.subheader("Orthographic Views")
     tab1, tab2, tab3 = st.tabs(["Plan View", "Elevation View", "Section View"])
