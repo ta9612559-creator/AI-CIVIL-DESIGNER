@@ -1,3 +1,4 @@
+
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
@@ -42,6 +43,30 @@ st.markdown("""
         color: #a9b8c7 !important;
         font-size: 0.85rem;
         font-weight: 500;
+    }
+ 
+    /* Sidebar input fields: dark background instead of washed-out white */
+    [data-testid="stSidebar"] div[data-baseweb="select"] > div,
+    [data-testid="stSidebar"] div[data-baseweb="base-input"],
+    [data-testid="stSidebar"] input[type="number"],
+    [data-testid="stSidebar"] input {
+        background-color: #24384b !important;
+        color: #f1f5f9 !important;
+        border: 1px solid #3d5568 !important;
+        border-radius: 6px !important;
+    }
+    [data-testid="stSidebar"] div[data-baseweb="select"] span,
+    [data-testid="stSidebar"] div[data-baseweb="select"] div {
+        color: #f1f5f9 !important;
+    }
+    [data-testid="stSidebar"] button[title="Increment"],
+    [data-testid="stSidebar"] button[title="Decrement"] {
+        background-color: #2c435a !important;
+        border: 1px solid #3d5568 !important;
+        color: #f1f5f9 !important;
+    }
+    [data-testid="stSidebar"] svg {
+        fill: #cbd5e1 !important;
     }
  
     div[data-testid="stMetric"] {
@@ -114,6 +139,44 @@ STRUCT_COLOR = {
     "Shear Wall System": "#7c92a8",
     "Steel Frame": "#9a8168",
 }
+ 
+# Rough conceptual construction rates (PKR per sq ft of covered area), by structural system.
+# These are order-of-magnitude planning figures, not tender-ready quotes.
+RATE_PER_SQFT_PKR = {
+    "RC Frame": 3200,
+    "Shear Wall System": 3800,
+    "Steel Frame": 4200,
+}
+ 
+FOUNDATION_EXTRA_PKR_PER_SQFT = {
+    "Isolated Footing": 150,
+    "Strip Footing": 200,
+    "Raft Foundation": 350,
+    "Pile Foundation": 700,
+}
+ 
+ 
+def estimate_cost_and_materials(footprint, floors, structural_system, foundation_type):
+    covered_area_m2 = sum(dx * dy for (_, _, dx, dy) in footprint)
+    covered_area_sqft = covered_area_m2 * 10.7639
+    total_area_sqft = covered_area_sqft * floors
+ 
+    rate = RATE_PER_SQFT_PKR[structural_system] + FOUNDATION_EXTRA_PKR_PER_SQFT[foundation_type]
+    total_cost_pkr = total_area_sqft * rate
+ 
+    concrete_m3 = covered_area_m2 * floors * 0.16          # rough: slabs+beams+columns per floor
+    steel_tonnes = total_area_sqft * 0.0035                # rough: ~3.5 kg/sqft reinforcement
+    cement_bags = concrete_m3 * 7                          # rough: ~7 bags/m3 of concrete
+ 
+    return {
+        "covered_area_sqft": covered_area_sqft,
+        "total_area_sqft": total_area_sqft,
+        "rate_per_sqft": rate,
+        "total_cost_pkr": total_cost_pkr,
+        "concrete_m3": concrete_m3,
+        "steel_tonnes": steel_tonnes,
+        "cement_bags": cement_bags,
+    }
  
 # =========================================================
 # RECOMMENDATION LOGIC (rule-based)
@@ -597,6 +660,24 @@ if run:
         st.subheader("⚠️ Warnings")
         for w in result["warnings"]:
             st.warning(w)
+ 
+    st.subheader("Estimated Cost & Materials")
+    st.caption("Rough, order-of-magnitude planning figures based on covered area — not a substitute for a detailed BOQ.")
+    footprint_for_cost = get_footprint(result["shapes"][0], length, width)
+    est = estimate_cost_and_materials(footprint_for_cost, floors, result["structural_system"], result["foundation"])
+ 
+    ec1, ec2, ec3 = st.columns(3)
+    ec1.metric("Covered Area", f"{est['covered_area_sqft']:,.0f} sq ft")
+    ec2.metric("Total Built-up Area", f"{est['total_area_sqft']:,.0f} sq ft")
+    ec3.metric("Rate Used", f"PKR {est['rate_per_sqft']:,.0f} / sq ft")
+ 
+    ec4, ec5, ec6 = st.columns(3)
+    ec4.metric("Estimated Cost", f"PKR {est['total_cost_pkr']:,.0f}")
+    ec5.metric("Concrete (approx.)", f"{est['concrete_m3']:.1f} m³")
+    ec6.metric("Steel (approx.)", f"{est['steel_tonnes']:.2f} tonnes")
+ 
+    st.caption(f"Cement (approx.): {est['cement_bags']:.0f} bags · Rate includes structural system + foundation type premium, "
+               "but excludes finishing quality, site access, region, and market fluctuation.")
  
     st.subheader("Conceptual 3D Model")
     chosen_shape = st.selectbox("Preview shape", result["shapes"], key="shape_preview")
