@@ -1,4 +1,3 @@
-
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
@@ -260,20 +259,80 @@ def ground_plane_traces(length, width, soil_color):
     pad = 0.4
     x = [-length*pad, length*(1+pad), length*(1+pad), -length*pad]
     y = [-width*pad, -width*pad, width*(1+pad), width*(1+pad)]
-    g1 = go.Mesh3d(x=x, y=y, z=[0,0,0,0], i=[0], j=[1], k=[2], color=soil_color, opacity=0.9)
-    g2 = go.Mesh3d(x=[x[0], x[2], x[3]], y=[y[0], y[2], y[3]], z=[0,0,0], i=[0], j=[1], k=[2], color=soil_color, opacity=0.9)
+    g1 = go.Mesh3d(x=x, y=y, z=[0,0,0,0], i=[0], j=[1], k=[2], color=soil_color, opacity=0.55)
+    g2 = go.Mesh3d(x=[x[0], x[2], x[3]], y=[y[0], y[2], y[3]], z=[0,0,0], i=[0], j=[1], k=[2], color=soil_color, opacity=0.55)
     return [g1, g2]
  
  
-def build_3d_animated_figure(shape, length, width, floors, structural_system, soil_color):
+def soil_block_trace(length, width, depth, soil_color):
+    """Translucent soil volume beneath grade so the foundation reads as buried, not floating."""
+    pad = 0.4
+    return make_box_mesh(-length*pad, -width*pad, -depth-1.5, length*(1+2*pad), width*(1+2*pad), depth+1.5,
+                          soil_color, opacity=0.28)
+ 
+ 
+def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065"):
+    """Build below-grade foundation geometry matching the recommended foundation type."""
+    traces = []
+    col_color = "#8f8a7e"
+ 
+    if foundation_type == "Isolated Footing":
+        pad_size = 1.4
+        pad_h = max(0.45, depth * 0.3)
+        for (x0, y0, dx, dy) in footprint:
+            for (cx, cy) in [(x0, y0), (x0+dx, y0), (x0, y0+dy), (x0+dx, y0+dy)]:
+                traces.append(make_box_mesh(cx-pad_size/2, cy-pad_size/2, -depth, pad_size, pad_size, pad_h, fnd_color, 0.97))
+                traces.append(make_box_edges(cx-pad_size/2, cy-pad_size/2, -depth, pad_size, pad_size, pad_h))
+                traces.append(make_box_mesh(cx-0.25, cy-0.25, -depth+pad_h, 0.5, 0.5, depth-pad_h, col_color, 0.97))
+                traces.append(make_box_edges(cx-0.25, cy-0.25, -depth+pad_h, 0.5, 0.5, depth-pad_h))
+ 
+    elif foundation_type == "Strip Footing":
+        strip_w, strip_h = 0.9, max(0.4, depth * 0.3)
+        for (x0, y0, dx, dy) in footprint:
+            edges = [
+                (x0-0.3, y0-0.3, dx+0.6, strip_w),
+                (x0-0.3, y0+dy-strip_w+0.3, dx+0.6, strip_w),
+                (x0-0.3, y0-0.3, strip_w, dy+0.6),
+                (x0+dx-strip_w+0.3, y0-0.3, strip_w, dy+0.6),
+            ]
+            for (ex, ey, edx, edy) in edges:
+                traces.append(make_box_mesh(ex, ey, -depth, edx, edy, strip_h, fnd_color, 0.97))
+            traces.append(make_box_edges(x0-0.3, y0-0.3, -depth, dx+0.6, dy+0.6, strip_h))
+ 
+    elif foundation_type == "Raft Foundation":
+        raft_h = max(0.5, depth * 0.28)
+        for (x0, y0, dx, dy) in footprint:
+            traces.append(make_box_mesh(x0-0.5, y0-0.5, -depth, dx+1.0, dy+1.0, raft_h, fnd_color, 0.97))
+            traces.append(make_box_edges(x0-0.5, y0-0.5, -depth, dx+1.0, dy+1.0, raft_h))
+ 
+    elif foundation_type == "Pile Foundation":
+        cap_h = 1.2
+        for (x0, y0, dx, dy) in footprint:
+            traces.append(make_box_mesh(x0-0.3, y0-0.3, -cap_h, dx+0.6, dy+0.6, cap_h, fnd_color, 0.97))
+            traces.append(make_box_edges(x0-0.3, y0-0.3, -cap_h, dx+0.6, dy+0.6, cap_h))
+            nx = max(2, min(3, int(dx // 5)))
+            ny = max(2, min(3, int(dy // 5)))
+            xs = np.linspace(x0+0.6, x0+dx-0.6, nx)
+            ys = np.linspace(y0+0.6, y0+dy-0.6, ny)
+            for px in xs:
+                for py in ys:
+                    traces.append(make_box_mesh(px-0.25, py-0.25, -depth, 0.5, 0.5, depth-cap_h, "#5c5850", 0.97))
+ 
+    return traces
+ 
+ 
+def build_3d_animated_figure(shape, length, width, floors, structural_system, soil_color, foundation_type, depth):
     floor_height = 3.0
     color = STRUCT_COLOR.get(structural_system, "#8c9aa8")
     footprint = get_footprint(shape, length, width)
     ground = ground_plane_traces(length, width, soil_color)
+    soil_block = soil_block_trace(length, width, depth, soil_color)
+    foundation = make_foundation_traces(footprint, foundation_type, depth)
+    base_layer = [soil_block] + foundation + ground
  
     frames = []
     for f in range(1, floors + 1):
-        frame_data = list(ground)
+        frame_data = list(base_layer)
         for lvl in range(f):
             z0 = lvl * floor_height
             opacity = 1.0 if lvl == f - 1 else 0.88
@@ -288,7 +347,7 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
             xaxis_title="Length (m)", yaxis_title="Width (m)", zaxis_title="Height (m)",
             aspectmode="data",
             dragmode="orbit",
-            camera=dict(eye=dict(x=1.5, y=1.5, z=0.9)),
+            camera=dict(eye=dict(x=1.6, y=1.6, z=1.3)),
             xaxis=dict(backgroundcolor="rgb(247,248,250)", gridcolor="rgb(225,228,232)"),
             yaxis=dict(backgroundcolor="rgb(247,248,250)", gridcolor="rgb(225,228,232)"),
             zaxis=dict(backgroundcolor="rgb(250,251,252)", gridcolor="rgb(225,228,232)"),
@@ -414,13 +473,99 @@ def build_section_view(width, floors, foundation_type, depth, soil_name, groundw
 # UI
 # =========================================================
  
-st.title("AI Civil Designer")
-st.markdown(
-    "<p style='color:#64748b; margin-top:-10px; font-size:1.05rem;'>"
-    "Conceptual foundation, structural system, and layout recommendations based on site conditions"
-    "</p>", unsafe_allow_html=True
-)
-st.markdown("<hr style='margin-top:0.4rem; margin-bottom:1.4rem; border-color:#e2e6ea;'>", unsafe_allow_html=True)
+st.markdown("""
+<style>
+    .hero {
+        background: linear-gradient(120deg, #1c2b3a 0%, #2b4257 100%);
+        border-radius: 14px;
+        padding: 42px 40px;
+        margin-bottom: 28px;
+        color: #ffffff;
+    }
+    .hero-eyebrow {
+        text-transform: uppercase;
+        letter-spacing: 1.5px;
+        font-size: 0.75rem;
+        font-weight: 600;
+        color: #8fb4d9;
+        margin-bottom: 6px;
+    }
+    .hero-title {
+        font-size: 2.1rem;
+        font-weight: 700;
+        margin: 0 0 10px 0;
+        color: #ffffff;
+        letter-spacing: -0.5px;
+    }
+    .hero-sub {
+        font-size: 1.02rem;
+        color: #cbd8e5;
+        max-width: 720px;
+        line-height: 1.5;
+    }
+    .feature-card {
+        background: #ffffff;
+        border: 1px solid #e2e6ea;
+        border-radius: 10px;
+        padding: 18px 20px;
+        height: 100%;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.04);
+    }
+    .feature-card .icon {
+        font-size: 1.3rem;
+        margin-bottom: 6px;
+    }
+    .feature-card .title {
+        font-weight: 600;
+        color: #1c2b3a;
+        margin-bottom: 4px;
+        font-size: 0.95rem;
+    }
+    .feature-card .desc {
+        color: #64748b;
+        font-size: 0.85rem;
+        line-height: 1.4;
+    }
+</style>
+ 
+<div class="hero">
+    <div class="hero-eyebrow">CIVIL ENGINEERING · CONCEPTUAL DESIGN TOOL</div>
+    <div class="hero-title">AI Civil Designer</div>
+    <div class="hero-sub">
+        Enter your site conditions and get an instant, engineering-informed starting point:
+        foundation type, structural system, building shape, and a full 3D model with
+        plan, elevation, and section views — all before you sit down with a licensed engineer.
+    </div>
+</div>
+""", unsafe_allow_html=True)
+ 
+fc1, fc2, fc3 = st.columns(3)
+with fc1:
+    st.markdown("""
+    <div class="feature-card">
+        <div class="icon">🧭</div>
+        <div class="title">Site-aware recommendations</div>
+        <div class="desc">18 soil profiles, seismic zone, groundwater level, and building purpose all shape the output.</div>
+    </div>
+    """, unsafe_allow_html=True)
+with fc2:
+    st.markdown("""
+    <div class="feature-card">
+        <div class="icon">🏗️</div>
+        <div class="title">Animated 3D model</div>
+        <div class="desc">A rotatable model that builds floor by floor, with the foundation visible below grade.</div>
+    </div>
+    """, unsafe_allow_html=True)
+with fc3:
+    st.markdown("""
+    <div class="feature-card">
+        <div class="icon">📐</div>
+        <div class="title">Engineering drawings</div>
+        <div class="desc">Plan, elevation, and section views generated automatically from your inputs.</div>
+    </div>
+    """, unsafe_allow_html=True)
+ 
+st.write("")
  
 with st.sidebar:
     st.header("Site & Building Inputs")
@@ -455,7 +600,10 @@ if run:
  
     st.subheader("Conceptual 3D Model")
     chosen_shape = st.selectbox("Preview shape", result["shapes"], key="shape_preview")
-    fig3d = build_3d_animated_figure(chosen_shape, length, width, floors, result["structural_system"], soil_color)
+    fig3d = build_3d_animated_figure(
+        chosen_shape, length, width, floors, result["structural_system"],
+        soil_color, result["foundation"], result["depth"]
+    )
     st.plotly_chart(
         fig3d,
         use_container_width=True,
@@ -466,7 +614,11 @@ if run:
             "scrollZoom": True,
         },
     )
-    st.caption("Drag with your cursor to rotate the model, scroll to zoom, and use **Build sequence** (bottom-left) to animate construction floor by floor.")
+    st.caption(
+        "Drag with your cursor to rotate and tilt the model, scroll to zoom, and use **Build sequence** "
+        "(bottom-left) to animate construction floor by floor. The soil beneath grade is shown translucent "
+        "so the foundation is visible underneath the building."
+    )
  
     st.subheader("Orthographic Views")
     tab1, tab2, tab3 = st.tabs(["Plan View", "Elevation View", "Section View"])
@@ -485,4 +637,12 @@ if run:
         "by a licensed structural/civil engineer before construction."
     )
 else:
-    st.info("Fill in the site details in the sidebar and click **Get Recommendation** to see suggestions, the animated 3D model, and plan/elevation/section views.")
+    st.markdown("""
+    <div style="background:#ffffff; border:1px dashed #cbd5e1; border-radius:10px;
+                padding:26px 24px; text-align:center; color:#475569;">
+        <div style="font-size:1.4rem; margin-bottom:6px;">👈</div>
+        <div style="font-weight:600; color:#1c2b3a; margin-bottom:4px;">Enter your site details in the sidebar</div>
+        <div style="font-size:0.9rem;">Click <b>Get Recommendation</b> to generate the foundation type, structural
+        system, animated 3D model, and plan/elevation/section drawings.</div>
+    </div>
+    """, unsafe_allow_html=True)
