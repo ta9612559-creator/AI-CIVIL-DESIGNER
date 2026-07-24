@@ -319,7 +319,7 @@ def make_box_edges(x0, y0, z0, dx, dy, dz, line_color="#3a3a3a"):
  
  
 def ground_plane_traces(length, width, soil_color):
-    pad = 0.4
+    pad = 0.15
     x = [-length*pad, length*(1+pad), length*(1+pad), -length*pad]
     y = [-width*pad, -width*pad, width*(1+pad), width*(1+pad)]
     g1 = go.Mesh3d(x=x, y=y, z=[0,0,0,0], i=[0], j=[1], k=[2], color=soil_color, opacity=0.55)
@@ -327,11 +327,35 @@ def ground_plane_traces(length, width, soil_color):
     return [g1, g2]
  
  
-def soil_block_trace(length, width, depth, soil_color):
-    """Translucent soil volume beneath grade so the foundation reads as buried, not floating."""
-    pad = 0.4
-    return make_box_mesh(-length*pad, -width*pad, -depth-1.5, length*(1+2*pad), width*(1+2*pad), depth+1.5,
-                          soil_color, opacity=0.28)
+def soil_block_trace(footprint, depth, soil_color):
+    """Translucent soil volume beneath grade, sized tightly to the footprint (+ small margin)
+    so it reads as excavation around the foundation, not a giant surrounding wall."""
+    xs = [x0 for (x0, y0, dx, dy) in footprint] + [x0 + dx for (x0, y0, dx, dy) in footprint]
+    ys = [y0 for (x0, y0, dx, dy) in footprint] + [y0 + dy for (x0, y0, dx, dy) in footprint]
+    margin = 2.0
+    x_min, x_max = min(xs) - margin, max(xs) + margin
+    y_min, y_max = min(ys) - margin, max(ys) + margin
+    return make_box_mesh(x_min, y_min, -depth - 1.0, x_max - x_min, y_max - y_min, depth + 1.0,
+                          soil_color, opacity=0.22)
+ 
+ 
+def make_perimeter_beams(footprint, z0, z1, beam_w=0.35, color="#5b5751"):
+    """Straight beams running along each rectangle's four edges between z0 and z1 —
+    used both as foundation tie/grade beams and as floor-level ring beams."""
+    traces = []
+    for (x0, y0, dx, dy) in footprint:
+        edges = [
+            (x0, y0, x0 + dx, y0),          # bottom edge
+            (x0, y0 + dy, x0 + dx, y0 + dy),  # top edge
+            (x0, y0, x0, y0 + dy),          # left edge
+            (x0 + dx, y0, x0 + dx, y0 + dy),  # right edge
+        ]
+        for (ax, ay, bx, by) in edges:
+            if ay == by:
+                traces.append(make_box_mesh(min(ax, bx), ay - beam_w/2, z0, abs(bx-ax), beam_w, z1-z0, color, 0.97))
+            else:
+                traces.append(make_box_mesh(ax - beam_w/2, min(ay, by), z0, beam_w, abs(by-ay), z1-z0, color, 0.97))
+    return traces
  
  
 def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065"):
@@ -348,6 +372,8 @@ def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065
                 traces.append(make_box_edges(cx-pad_size/2, cy-pad_size/2, -depth, pad_size, pad_size, pad_h))
                 traces.append(make_box_mesh(cx-0.25, cy-0.25, -depth+pad_h, 0.5, 0.5, depth-pad_h, col_color, 0.97))
                 traces.append(make_box_edges(cx-0.25, cy-0.25, -depth+pad_h, 0.5, 0.5, depth-pad_h))
+        # grade / tie beams connecting the column tops just below ground level
+        traces += make_perimeter_beams(footprint, -0.4, 0, beam_w=0.35, color="#605c53")
  
     elif foundation_type == "Strip Footing":
         strip_w, strip_h = 0.9, max(0.4, depth * 0.3)
@@ -380,6 +406,8 @@ def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065
             for px in xs:
                 for py in ys:
                     traces.append(make_box_mesh(px-0.25, py-0.25, -depth, 0.5, 0.5, depth-cap_h, "#5c5850", 0.97))
+        # tie beams connecting pile cap tops just below ground level
+        traces += make_perimeter_beams(footprint, -0.4, 0, beam_w=0.4, color="#605c53")
  
     return traces
  
@@ -387,9 +415,10 @@ def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065
 def build_3d_animated_figure(shape, length, width, floors, structural_system, soil_color, foundation_type, depth):
     floor_height = 3.0
     color = STRUCT_COLOR.get(structural_system, "#8c9aa8")
+    beam_color = {"RC Frame": "#8a8577", "Shear Wall System": "#546e8a", "Steel Frame": "#75604a"}.get(structural_system, "#7a7a72")
     footprint = get_footprint(shape, length, width)
     ground = ground_plane_traces(length, width, soil_color)
-    soil_block = soil_block_trace(length, width, depth, soil_color)
+    soil_block = soil_block_trace(footprint, depth, soil_color)
     foundation = make_foundation_traces(footprint, foundation_type, depth)
     base_layer = [soil_block] + foundation + ground
  
@@ -402,6 +431,8 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
             for (x0, y0, dx, dy) in footprint:
                 frame_data.append(make_box_mesh(x0, y0, z0, dx, dy, floor_height * 0.94, color, opacity))
                 frame_data.append(make_box_edges(x0, y0, z0, dx, dy, floor_height * 0.94))
+            # ring beam at the base of each floor, supporting the slab above
+            frame_data += make_perimeter_beams(footprint, z0, z0 + 0.35, beam_w=0.4, color=beam_color)
         frames.append(go.Frame(data=frame_data, name=str(f)))
  
     fig = go.Figure(data=frames[-1].data, frames=frames)
