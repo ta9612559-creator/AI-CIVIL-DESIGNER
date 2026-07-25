@@ -291,15 +291,46 @@ def make_box_mesh(x0, y0, z0, dx, dy, dz, color, opacity=1.0):
     x = [x0, x0, x0+dx, x0+dx, x0, x0, x0+dx, x0+dx]
     y = [y0, y0+dy, y0+dy, y0, y0, y0+dy, y0+dy, y0]
     z = [z0, z0, z0, z0, z0+dz, z0+dz, z0+dz, z0+dz]
-    i = [0, 0, 4, 4, 0, 0, 1, 1, 2, 2, 0, 3]
-    j = [1, 3, 5, 7, 1, 4, 2, 5, 3, 6, 4, 7]
-    k = [2, 2, 6, 6, 4, 5, 5, 6, 6, 7, 7, 4]
+    # Correct box triangulation: 2 triangles per face, always along adjacent corners
+    # (the previous index list connected diagonal corners on several faces, producing
+    # a visible bowtie/hourglass fold across each face instead of a flat surface).
+    i = [0, 0, 4, 4, 0, 0, 3, 3, 0, 0, 1, 1]
+    j = [1, 2, 5, 6, 1, 5, 2, 6, 3, 7, 2, 6]
+    k = [2, 3, 6, 7, 5, 4, 6, 7, 7, 4, 6, 5]
     return go.Mesh3d(
         x=x, y=y, z=z, i=i, j=j, k=k, color=color, opacity=opacity,
         flatshading=True, showscale=False,
         lighting=dict(ambient=0.65, diffuse=0.65, specular=0.15, roughness=0.7, fresnel=0.05),
         lightposition=dict(x=200, y=200, z=500),
     )
+ 
+ 
+def make_flat_quad(pts, color, opacity=0.92):
+    """A single flat rectangular panel from 4 ordered 3D corner points — used for windows."""
+    xs = [p[0] for p in pts]
+    ys = [p[1] for p in pts]
+    zs = [p[2] for p in pts]
+    return go.Mesh3d(x=xs, y=ys, z=zs, i=[0, 0], j=[1, 2], k=[2, 3],
+                      color=color, opacity=opacity, flatshading=True, showscale=False, hoverinfo="skip")
+ 
+ 
+def make_window_band(x0, y0, dx, dy, z0, dz, window_color="#3a4a5c"):
+    """A row of window strips on the two long faces of a floor slab, for a more realistic facade."""
+    eps = 0.03
+    wz0, wz1 = z0 + dz * 0.28, z0 + dz * 0.78
+    n_windows = max(2, int(dx // 3))
+    seg = dx / n_windows
+    traces = []
+    for n in range(n_windows):
+        wx0 = x0 + seg * n + seg * 0.15
+        wx1 = x0 + seg * n + seg * 0.85
+        traces.append(make_flat_quad([
+            (wx0, y0 - eps, wz0), (wx1, y0 - eps, wz0), (wx1, y0 - eps, wz1), (wx0, y0 - eps, wz1)
+        ], window_color))
+        traces.append(make_flat_quad([
+            (wx0, y0 + dy + eps, wz0), (wx1, y0 + dy + eps, wz0), (wx1, y0 + dy + eps, wz1), (wx0, y0 + dy + eps, wz1)
+        ], window_color))
+    return traces
  
  
 def make_box_edges(x0, y0, z0, dx, dy, dz, line_color="#3a3a3a"):
@@ -359,8 +390,8 @@ def make_perimeter_beams(footprint, z0, z1, beam_w=0.35, color="#5b5751"):
  
  
 FOUNDATION_BEAM_COLOR = "#b5451f"   # terracotta — distinct from gray floor beams
-DRAINAGE_COLOR = "#1f6f5c"          # teal-green — sewer / drainage lines
-TANK_COLOR = "#4a5850"              # septic tank / soak pit
+DRAINAGE_COLOR = "#1478d4"          # bright blue — sewer / drainage lines
+TANK_COLOR = "#3d4a44"              # septic tank / soak pit
  
  
 def make_label(x, y, z, text):
@@ -438,22 +469,39 @@ def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065
  
  
 def make_drainage_traces(footprint, length, width):
-    """Simple conceptual sewer connection: a pipe running from a corner of the building
-    to a soak pit / septic tank at the edge of the plot. Schematic, not a hydraulic design."""
+    """Sewer connection from the building to a soak pit / septic tank at the plot edge, drawn
+    as two visible pipe segments with a manhole at the bend. Uses the full footprint bounding
+    box (not just one rectangle), so it clears the building even for L/U-shaped layouts like
+    a school. Schematic, not a hydraulic design."""
     traces = []
-    x0, y0, dx, dy = footprint[0]
-    outlet = (x0 + dx * 0.15, y0 - 0.2, -0.9)
-    tank_x, tank_y = -length * 0.08, -width * 0.12
-    tank_size = 1.6
-    tank_top = -1.0
+    xs = [p[0] for p in footprint] + [p[0] + p[2] for p in footprint]
+    ys = [p[1] for p in footprint] + [p[1] + p[3] for p in footprint]
+    x_min, x_max = min(xs), max(xs)
+    y_min, y_max = min(ys), max(ys)
  
+    outlet = (x_min + (x_max - x_min) * 0.2, y_min, -0.7)
+    bend = (outlet[0], y_min - max(3.0, width * 0.25), -1.1)
+    tank_size = 1.8
+    tank_x, tank_y = bend[0] - tank_size/2, bend[1] - max(3.0, width * 0.2)
+    tank_top = -1.4
+ 
+    # segment 1: building outlet -> manhole bend, just outside the footprint
     traces.append(go.Scatter3d(
-        x=[outlet[0], tank_x + tank_size/2], y=[outlet[1], tank_y + tank_size/2], z=[outlet[2], tank_top],
-        mode="lines", line=dict(color=DRAINAGE_COLOR, width=9), showlegend=False, hoverinfo="skip",
+        x=[outlet[0], bend[0]], y=[outlet[1], bend[1]], z=[outlet[2], bend[2]],
+        mode="lines", line=dict(color=DRAINAGE_COLOR, width=11), showlegend=False, hoverinfo="skip",
+    ))
+    traces.append(make_box_mesh(bend[0]-0.35, bend[1]-0.35, bend[2]-0.15, 0.7, 0.7, 0.3, "#2e3a44", 0.95))
+    traces.append(make_box_edges(bend[0]-0.35, bend[1]-0.35, bend[2]-0.15, 0.7, 0.7, 0.3))
+ 
+    # segment 2: manhole -> septic tank / soak pit
+    traces.append(go.Scatter3d(
+        x=[bend[0], tank_x + tank_size/2], y=[bend[1], tank_y + tank_size/2], z=[bend[2], tank_top],
+        mode="lines", line=dict(color=DRAINAGE_COLOR, width=11), showlegend=False, hoverinfo="skip",
     ))
     traces.append(make_box_mesh(tank_x, tank_y, tank_top - 1.6, tank_size, tank_size, 1.6, TANK_COLOR, 0.95))
     traces.append(make_box_edges(tank_x, tank_y, tank_top - 1.6, tank_size, tank_size, 1.6))
-    traces.append(make_label(tank_x + tank_size/2, tank_y + tank_size/2, 0.8, "Septic tank / soak pit"))
+    traces.append(make_label(tank_x + tank_size/2, tank_y + tank_size/2, 0.9, "Septic tank / soak pit"))
+    traces.append(make_label((outlet[0]+bend[0])/2, (outlet[1]+bend[1])/2, 0.7, "Drain pipe"))
     return traces
  
  
@@ -477,8 +525,14 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
             for (x0, y0, dx, dy) in footprint:
                 frame_data.append(make_box_mesh(x0, y0, z0, dx, dy, floor_height * 0.94, color, opacity))
                 frame_data.append(make_box_edges(x0, y0, z0, dx, dy, floor_height * 0.94))
+                frame_data += make_window_band(x0, y0, dx, dy, z0, floor_height * 0.94)
             # ring beam at the base of each floor, supporting the slab above
             frame_data += make_perimeter_beams(footprint, z0, z0 + 0.35, beam_w=0.4, color=beam_color)
+        # roof cap / parapet on the top floor for a finished look
+        roof_z = f * floor_height
+        for (x0, y0, dx, dy) in footprint:
+            frame_data.append(make_box_mesh(x0-0.15, y0-0.15, roof_z, dx+0.3, dy+0.3, 0.35, "#565048", 0.97))
+            frame_data.append(make_box_edges(x0-0.15, y0-0.15, roof_z, dx+0.3, dy+0.3, 0.35))
         frames.append(go.Frame(data=frame_data, name=str(f)))
  
     fig = go.Figure(data=frames[-1].data, frames=frames)
@@ -564,6 +618,10 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
             traces.append(make_box_mesh(px, py, -0.05, plot_w, plot_d, 0.05, soil_color, 0.5))
             traces.append(make_box_mesh(bx, by, 0, b_w, b_d, floor_h * floors_here, color, 0.97))
             traces.append(make_box_edges(bx, by, 0, b_w, b_d, floor_h * floors_here))
+            for lvl in range(floors_here):
+                traces += make_window_band(bx, by, b_w, b_d, lvl * floor_h, floor_h * 0.94)
+            roof_z = floor_h * floors_here
+            traces.append(make_box_mesh(bx-0.1, by-0.1, roof_z, b_w+0.2, b_d+0.2, 0.25, "#565048", 0.97))
             traces.append(make_label(bx + b_w/2, by + b_d/2, floor_h * floors_here + 1.2, btype))
  
     # main sewer trunk line running along the two spine roads (a "+" shape), plus outfall
