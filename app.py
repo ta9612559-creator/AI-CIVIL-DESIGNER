@@ -1,4 +1,3 @@
-
 import streamlit as st
 import plotly.graph_objects as go
 import numpy as np
@@ -358,10 +357,27 @@ def make_perimeter_beams(footprint, z0, z1, beam_w=0.35, color="#5b5751"):
     return traces
  
  
+FOUNDATION_BEAM_COLOR = "#b5451f"   # terracotta — distinct from gray floor beams
+DRAINAGE_COLOR = "#1f6f5c"          # teal-green — sewer / drainage lines
+TANK_COLOR = "#4a5850"              # septic tank / soak pit
+ 
+ 
+def make_label(x, y, z, text):
+    return go.Scatter3d(
+        x=[x], y=[y], z=[z], mode="text", text=[text], textposition="middle center",
+        textfont=dict(size=12, color="#1c2b3a", family="Inter, sans-serif"),
+        showlegend=False, hoverinfo="skip",
+    )
+ 
+ 
 def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065"):
-    """Build below-grade foundation geometry matching the recommended foundation type."""
+    """Build below-grade foundation geometry matching the recommended foundation type.
+    The foundation-level beam is always a distinct terracotta color and labeled, so it
+    never blends into the gray floor ring-beams stacked above it."""
     traces = []
     col_color = "#8f8a7e"
+    label_x = footprint[0][0] + footprint[0][2] / 2
+    label_y = footprint[0][1] + footprint[0][3] / 2
  
     if foundation_type == "Isolated Footing":
         pad_size = 1.4
@@ -372,8 +388,8 @@ def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065
                 traces.append(make_box_edges(cx-pad_size/2, cy-pad_size/2, -depth, pad_size, pad_size, pad_h))
                 traces.append(make_box_mesh(cx-0.25, cy-0.25, -depth+pad_h, 0.5, 0.5, depth-pad_h, col_color, 0.97))
                 traces.append(make_box_edges(cx-0.25, cy-0.25, -depth+pad_h, 0.5, 0.5, depth-pad_h))
-        # grade / tie beams connecting the column tops just below ground level
-        traces += make_perimeter_beams(footprint, -0.4, 0, beam_w=0.35, color="#605c53")
+        traces += make_perimeter_beams(footprint, -0.45, -0.05, beam_w=0.55, color=FOUNDATION_BEAM_COLOR)
+        traces.append(make_label(label_x, label_y, 1.2, "Foundation tie beam"))
  
     elif foundation_type == "Strip Footing":
         strip_w, strip_h = 0.9, max(0.4, depth * 0.3)
@@ -387,12 +403,20 @@ def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065
             for (ex, ey, edx, edy) in edges:
                 traces.append(make_box_mesh(ex, ey, -depth, edx, edy, strip_h, fnd_color, 0.97))
             traces.append(make_box_edges(x0-0.3, y0-0.3, -depth, dx+0.6, dy+0.6, strip_h))
+            beam_z0 = -depth + strip_h
+            traces += make_perimeter_beams([(x0-0.3, y0-0.3, dx+0.6, dy+0.6)], beam_z0, beam_z0+0.35,
+                                            beam_w=1.0, color=FOUNDATION_BEAM_COLOR)
+        traces.append(make_label(label_x, label_y, 1.2, "Foundation beam (on strip footing)"))
  
     elif foundation_type == "Raft Foundation":
         raft_h = max(0.5, depth * 0.28)
         for (x0, y0, dx, dy) in footprint:
             traces.append(make_box_mesh(x0-0.5, y0-0.5, -depth, dx+1.0, dy+1.0, raft_h, fnd_color, 0.97))
             traces.append(make_box_edges(x0-0.5, y0-0.5, -depth, dx+1.0, dy+1.0, raft_h))
+            beam_z0 = -depth + raft_h
+            traces += make_perimeter_beams([(x0-0.5, y0-0.5, dx+1.0, dy+1.0)], beam_z0, beam_z0+0.4,
+                                            beam_w=0.6, color=FOUNDATION_BEAM_COLOR)
+        traces.append(make_label(label_x, label_y, 1.2, "Foundation edge beam (on raft)"))
  
     elif foundation_type == "Pile Foundation":
         cap_h = 1.2
@@ -406,9 +430,29 @@ def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065
             for px in xs:
                 for py in ys:
                     traces.append(make_box_mesh(px-0.25, py-0.25, -depth, 0.5, 0.5, depth-cap_h, "#5c5850", 0.97))
-        # tie beams connecting pile cap tops just below ground level
-        traces += make_perimeter_beams(footprint, -0.4, 0, beam_w=0.4, color="#605c53")
+        traces += make_perimeter_beams(footprint, -0.45, -0.05, beam_w=0.55, color=FOUNDATION_BEAM_COLOR)
+        traces.append(make_label(label_x, label_y, 1.2, "Foundation tie beam"))
  
+    return traces
+ 
+ 
+def make_drainage_traces(footprint, length, width):
+    """Simple conceptual sewer connection: a pipe running from a corner of the building
+    to a soak pit / septic tank at the edge of the plot. Schematic, not a hydraulic design."""
+    traces = []
+    x0, y0, dx, dy = footprint[0]
+    outlet = (x0 + dx * 0.15, y0 - 0.2, -0.9)
+    tank_x, tank_y = -length * 0.08, -width * 0.12
+    tank_size = 1.6
+    tank_top = -1.0
+ 
+    traces.append(go.Scatter3d(
+        x=[outlet[0], tank_x + tank_size/2], y=[outlet[1], tank_y + tank_size/2], z=[outlet[2], tank_top],
+        mode="lines", line=dict(color=DRAINAGE_COLOR, width=9), showlegend=False, hoverinfo="skip",
+    ))
+    traces.append(make_box_mesh(tank_x, tank_y, tank_top - 1.6, tank_size, tank_size, 1.6, TANK_COLOR, 0.95))
+    traces.append(make_box_edges(tank_x, tank_y, tank_top - 1.6, tank_size, tank_size, 1.6))
+    traces.append(make_label(tank_x + tank_size/2, tank_y + tank_size/2, 0.8, "Septic tank / soak pit"))
     return traces
  
  
@@ -420,7 +464,8 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
     ground = ground_plane_traces(length, width, soil_color)
     soil_block = soil_block_trace(footprint, depth, soil_color)
     foundation = make_foundation_traces(footprint, foundation_type, depth)
-    base_layer = [soil_block] + foundation + ground
+    drainage = make_drainage_traces(footprint, length, width)
+    base_layer = [soil_block] + foundation + ground + drainage
  
     frames = []
     for f in range(1, floors + 1):
@@ -465,9 +510,97 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
     return fig
  
  
-# =========================================================
-# 2D ORTHOGRAPHIC VIEWS (Plan / Elevation / Section)
-# =========================================================
+def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_floors, soil_color, structural_system):
+    """Conceptual mixed-use town layout: a grid of plots — mostly houses, with a hospital
+    and office block worked in when the grid is big enough — separated by roads, with a
+    schematic sewer network: a main trunk line under the roads collecting every building's
+    lateral connection, running to a single outfall. Planning-level sketch, not a hydraulic
+    design (no pipe sizing, slopes, or flow calculations)."""
+    road_w = 4.0
+    plot_w = (total_length - (houses_per_row - 1) * road_w) / houses_per_row
+    plot_d = (total_width - (rows - 1) * road_w) / rows
+    floor_h = 3.0
+    total_plots = houses_per_row * rows
+ 
+    BUILD_FLOORS = {"House": house_floors, "Hospital": max(3, house_floors + 1), "Office": max(4, house_floors + 2)}
+    BUILD_COLOR = {"House": STRUCT_COLOR.get(structural_system, "#c9c4b8"), "Hospital": "#7c92a8", "Office": "#9a8168"}
+ 
+    # assign building types to plots: mostly houses, with one hospital and one office
+    # worked into the grid once it's large enough to make that realistic
+    plot_types = ["House"] * total_plots
+    if total_plots >= 4:
+        plot_types[total_plots // 2] = "Hospital"
+    if total_plots >= 6:
+        plot_types[-1] = "Office"
+ 
+    traces = []
+    traces += ground_plane_traces(total_length, total_width, "#9a9690")
+    traces[-1].opacity = 0.9
+    traces[-2].opacity = 0.9
+ 
+    trunk_z = -1.4
+    outfall = (total_length + 2.0, total_width / 2, trunk_z - 0.6)
+ 
+    building_centers = []
+    counts = {"House": 0, "Hospital": 0, "Office": 0}
+    idx = 0
+    for r in range(rows):
+        for c in range(houses_per_row):
+            btype = plot_types[idx]
+            idx += 1
+            counts[btype] += 1
+            floors_here = BUILD_FLOORS[btype]
+            color = BUILD_COLOR[btype]
+            shrink = 0.55 if btype in ("Hospital", "Office") else 0.65
+            b_w, b_d = plot_w * shrink, plot_d * shrink
+ 
+            px = c * (plot_w + road_w)
+            py = r * (plot_d + road_w)
+            bx = px + (plot_w - b_w) / 2
+            by = py + (plot_d - b_d) / 2
+            building_centers.append((bx + b_w/2, by + b_d/2))
+ 
+            traces.append(make_box_mesh(px, py, -0.05, plot_w, plot_d, 0.05, soil_color, 0.5))
+            traces.append(make_box_mesh(bx, by, 0, b_w, b_d, floor_h * floors_here, color, 0.97))
+            traces.append(make_box_edges(bx, by, 0, b_w, b_d, floor_h * floors_here))
+            traces.append(make_label(bx + b_w/2, by + b_d/2, floor_h * floors_here + 1.2, btype))
+ 
+    # main sewer trunk line running along the two spine roads (a "+" shape), plus outfall
+    mid_x, mid_y = total_length / 2 - road_w/2, total_width / 2 - road_w/2
+    traces.append(go.Scatter3d(x=[0, total_length], y=[mid_y, mid_y], z=[trunk_z, trunk_z],
+                                mode="lines", line=dict(color=DRAINAGE_COLOR, width=10), showlegend=False, hoverinfo="skip"))
+    traces.append(go.Scatter3d(x=[mid_x, mid_x], y=[0, total_width], z=[trunk_z, trunk_z],
+                                mode="lines", line=dict(color=DRAINAGE_COLOR, width=10), showlegend=False, hoverinfo="skip"))
+    traces.append(go.Scatter3d(x=[total_length, outfall[0]], y=[mid_y, outfall[1]], z=[trunk_z, outfall[2]],
+                                mode="lines", line=dict(color=DRAINAGE_COLOR, width=10), showlegend=False, hoverinfo="skip"))
+    traces.append(make_box_mesh(outfall[0]-0.8, outfall[1]-0.8, outfall[2]-0.8, 1.6, 1.6, 1.0, TANK_COLOR, 0.95))
+    traces.append(make_label(outfall[0], outfall[1], outfall[2]+1.2, "Outfall / main sewer connection"))
+ 
+    # lateral drainage connection from every building (house, hospital, or office) to the nearest spine line
+    for (bx, by) in building_centers:
+        traces.append(go.Scatter3d(
+            x=[bx, bx], y=[by, mid_y], z=[-0.6, trunk_z],
+            mode="lines", line=dict(color=DRAINAGE_COLOR, width=6), showlegend=False, hoverinfo="skip",
+        ))
+ 
+    traces.append(make_label(total_length/2, total_width/2, floor_h*max(BUILD_FLOORS.values()) + 3, "Main sewer trunk line"))
+ 
+    fig = go.Figure(data=traces)
+    fig.update_layout(
+        scene=dict(
+            xaxis_title="Length (m)", yaxis_title="Width (m)", zaxis_title="Height (m)",
+            aspectmode="data", dragmode="orbit",
+            camera=dict(eye=dict(x=1.5, y=1.5, z=1.1)),
+            xaxis=dict(backgroundcolor="rgb(247,248,250)", gridcolor="rgb(225,228,232)"),
+            yaxis=dict(backgroundcolor="rgb(247,248,250)", gridcolor="rgb(225,228,232)"),
+            zaxis=dict(backgroundcolor="rgb(250,251,252)", gridcolor="rgb(225,228,232)"),
+        ),
+        font=dict(family="Inter, sans-serif", color="#334155", size=11),
+        margin=dict(l=0, r=0, t=10, b=0),
+        height=650,
+        paper_bgcolor="rgba(0,0,0,0)",
+    )
+    return fig, counts
  
 def foundation_profile_shapes(x_center, x_span, depth, foundation_type, ground_y=0):
     """Return list of plotly shape dicts drawing the foundation below ground line (2D side view)."""
@@ -667,12 +800,61 @@ with st.sidebar:
     length = st.number_input("Plot length (m)", min_value=3.0, value=20.0, step=1.0)
     width = st.number_input("Plot width (m)", min_value=3.0, value=12.0, step=1.0)
     floors = st.slider("Number of floors", 1, 15, 3)
-    purpose = st.selectbox("Building purpose", ["house", "school", "hospital", "office", "warehouse"])
+    purpose = st.selectbox("Building purpose", ["house", "school", "hospital", "office", "warehouse", "town / housing society"])
+    if purpose == "town / housing society":
+        houses_per_row = st.slider("Houses per row", 2, 6, 3)
+        town_rows = st.slider("Number of rows", 1, 4, 2)
+        house_floors = st.slider("Floors per house", 1, 3, 2)
     seismic_zone = st.selectbox("Earthquake zone", ["Low", "Moderate", "High", "Severe"])
     groundwater = st.selectbox("Groundwater level", ["High (< 2m)", "Moderate (2-5m)", "Low (> 5m)"])
     run = st.button("Get Recommendation", type="primary", use_container_width=True)
  
-if run:
+if run and purpose == "town / housing society":
+    soil_color = SOIL_DB[soil_name]["color"]
+    st.subheader("Town Layout & Drainage Network")
+    st.caption(
+        "Conceptual planning sketch: house plots on a road grid with a schematic sewer network "
+        "(main trunk line + house connections + outfall). This is a layout concept, not a hydraulic "
+        "design — actual pipe sizing, slopes, and manhole spacing must follow local drainage codes."
+    )
+    # rough structural system guess for the town's houses, from soil + seismic zone
+    town_result = recommend(soil_name, house_floors, "house", seismic_zone, groundwater, length, width)
+    fig_town, type_counts = build_town_3d_figure(length, width, houses_per_row, town_rows, house_floors, soil_color, town_result["structural_system"])
+    st.plotly_chart(
+        fig_town, use_container_width=True,
+        config={"displayModeBar": True, "displaylogo": False, "scrollZoom": True},
+    )
+    st.caption("Drag to rotate/tilt, scroll to zoom. Teal lines are the sewer network; the dark box at the edge is the outfall.")
+ 
+    total_buildings = houses_per_row * town_rows
+    tc1, tc2, tc3, tc4 = st.columns(4)
+    tc1.metric("Houses", type_counts["House"])
+    tc2.metric("Hospitals", type_counts["Hospital"])
+    tc3.metric("Offices", type_counts["Office"])
+    tc4.metric("Total Buildings", total_buildings)
+ 
+    rc1, rc2 = st.columns(2)
+    rc1.metric("Foundation (typical)", town_result["foundation"])
+    rc2.metric("Structural System (typical)", town_result["structural_system"])
+ 
+    footprint_for_cost = [(0, 0, (length / houses_per_row) * 0.65, (width / town_rows) * 0.65)]
+    est = estimate_cost_and_materials(footprint_for_cost, house_floors, town_result["structural_system"], town_result["foundation"])
+    st.subheader("Estimated Cost (per house / total)")
+    tc4b, tc5, tc6 = st.columns(3)
+    tc4b.metric("Cost per House", f"PKR {est['total_cost_pkr']:,.0f}")
+    tc5.metric("Total Town Cost (approx.)", f"PKR {est['total_cost_pkr']*total_buildings:,.0f}")
+    tc6.metric("Rate Used", f"PKR {est['rate_per_sqft']:,.0f} / sq ft")
+    st.caption("Total town cost is a rough scaling from a single house's rate — hospital and office blocks in the "
+               "layout will cost meaningfully more per sq ft than shown here due to their larger floor counts.")
+ 
+    st.divider()
+    st.caption(
+        "⚠️ Disclaimer: This is a conceptual town layout only. Actual subdivision, road widths, plot "
+        "sizes, and drainage design must comply with local development authority bylaws and must be "
+        "designed and approved by a licensed civil engineer / town planner."
+    )
+ 
+elif run:
     result = recommend(soil_name, floors, purpose, seismic_zone, groundwater, length, width)
     soil_color = SOIL_DB[soil_name]["color"]
  
