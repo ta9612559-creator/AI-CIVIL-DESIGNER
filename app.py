@@ -580,15 +580,14 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
  
  
 def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_floors, soil_color, structural_system):
-    """Conceptual mixed-use town layout: a grid of plots — mostly houses, with a hospital
-    and office block worked in when the grid is big enough — separated by roads, with a
-    schematic sewer network: a main trunk line under the roads, a riser pipe visibly
-    touching each building's wall, then a lateral run to the trunk, ending at a single
-    outfall. Planning-level sketch, not a hydraulic design (no pipe sizing/slopes/flows)."""
-    # road width scales down for smaller plots or bigger grids, so plots never shrink to
-    # near-nothing (which was turning houses into thin stretched-out pillars)
-    road_w_x = max(1.2, min(4.0, total_length / (houses_per_row * 3)))
-    road_w_y = max(1.2, min(4.0, total_width / (rows * 3)))
+    """Conceptual mixed-use town layout: houses/hospital/office set back on plots beside
+    real road surfaces (not sitting on top of them), a few parked cars for scale, and a
+    proper branching sewer network — each building's riser feeds a street sewer line for
+    its row, every street line feeds one trunk main, and the trunk gets deeper as it runs
+    toward a single outfall, the way a real gravity sewer is graded. Planning-level sketch,
+    not a hydraulic design (no pipe sizing/slope calculations)."""
+    road_w_x = max(2.2, min(5.0, total_length / (houses_per_row * 2.5)))
+    road_w_y = max(2.2, min(5.0, total_width / (rows * 2.5)))
     plot_w = max(3.0, (total_length - (houses_per_row - 1) * road_w_x) / houses_per_row)
     plot_d = max(3.0, (total_width - (rows - 1) * road_w_y) / rows)
     floor_h = 3.0
@@ -596,9 +595,9 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
  
     BUILD_FLOORS = {"House": house_floors, "Hospital": max(3, house_floors + 1), "Office": max(4, house_floors + 2)}
     BUILD_COLOR = {"House": STRUCT_COLOR.get(structural_system, "#c9c4b8"), "Hospital": "#7c92a8", "Office": "#9a8168"}
+    ROAD_COLOR = "#48474a"
+    CAR_COLORS = ["#b23b3b", "#2b3b6b", "#c9c9c9", "#3f7d4c", "#4a4a52"]
  
-    # assign building types to plots: mostly houses, with one hospital and one office
-    # worked into the grid once it's large enough to make that realistic
     plot_types = ["House"] * total_plots
     if total_plots >= 4:
         plot_types[total_plots // 2] = "Hospital"
@@ -606,14 +605,45 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
         plot_types[-1] = "Office"
  
     traces = []
-    traces += ground_plane_traces(total_length, total_width, "#9a9690")
-    traces[-1].opacity = 0.9
-    traces[-2].opacity = 0.9
+    traces += ground_plane_traces(total_length, total_width, soil_color)  # bare earth base, not asphalt gray
+    traces[-1].opacity = 0.6
+    traces[-2].opacity = 0.6
  
-    trunk_z = -1.4
-    outfall = (total_length + 2.0, total_width / 2, trunk_z - 0.6)
+    # --- explicit road surfaces, visually distinct from the yards, with a center lane stripe ---
+    for r in range(rows - 1):
+        road_y0 = r * (plot_d + road_w_y) + plot_d
+        traces.append(make_box_mesh(-1.5, road_y0, 0.02, total_length + 3.0, road_w_y, 0.03, ROAD_COLOR, 0.97))
+        traces.append(go.Scatter3d(x=[0, total_length], y=[road_y0 + road_w_y/2]*2, z=[0.05, 0.05],
+                                    mode="lines", line=dict(color="#d8cf9a", width=3, dash="dash"),
+                                    showlegend=False, hoverinfo="skip"))
+    for c in range(houses_per_row - 1):
+        road_x0 = c * (plot_w + road_w_x) + plot_w
+        traces.append(make_box_mesh(road_x0, -1.5, 0.02, road_w_x, total_width + 3.0, 0.03, ROAD_COLOR, 0.97))
+        traces.append(go.Scatter3d(x=[road_x0 + road_w_x/2]*2, y=[0, total_width], z=[0.05, 0.05],
+                                    mode="lines", line=dict(color="#d8cf9a", width=3, dash="dash"),
+                                    showlegend=False, hoverinfo="skip"))
  
-    building_walls = []  # (wall_x, wall_y) for each building's drain riser point
+    # --- parked cars for scale/realism: one on each internal road ---
+    car_idx = 0
+    for r in range(rows - 1):
+        road_y0 = r * (plot_d + road_w_y) + plot_d
+        cx = total_length * (0.3 if r % 2 == 0 else 0.65)
+        cy = road_y0 + road_w_y * 0.72
+        col = CAR_COLORS[car_idx % len(CAR_COLORS)]
+        traces.append(make_box_mesh(cx, cy, 0.05, 3.6, 1.6, 1.3, col, 0.95))
+        traces.append(make_box_edges(cx, cy, 0.05, 3.6, 1.6, 1.3))
+        car_idx += 1
+    for c in range(houses_per_row - 1):
+        road_x0 = c * (plot_w + road_w_x) + plot_w
+        cy = total_width * (0.35 if c % 2 == 0 else 0.7)
+        cx = road_x0 + road_w_x * 0.72
+        col = CAR_COLORS[car_idx % len(CAR_COLORS)]
+        traces.append(make_box_mesh(cx, cy, 0.05, 1.6, 3.6, 1.3, col, 0.95))
+        traces.append(make_box_edges(cx, cy, 0.05, 1.6, 3.6, 1.3))
+        car_idx += 1
+ 
+    # --- buildings, set back on their plots beside the roads ---
+    building_walls = []  # (row_index, wall_x, wall_y) — the wall facing this row's street sewer
     counts = {"House": 0, "Hospital": 0, "Office": 0}
     idx = 0
     for r in range(rows):
@@ -623,21 +653,22 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
             counts[btype] += 1
             floors_here = BUILD_FLOORS[btype]
             color = BUILD_COLOR[btype]
-            # buildings fill most of their plot now — chunky massing instead of thin towers
-            shrink = 0.72 if btype in ("Hospital", "Office") else 0.8
+            shrink = 0.68 if btype in ("Hospital", "Office") else 0.72
             b_w, b_d = plot_w * shrink, plot_d * shrink
  
             px = c * (plot_w + road_w_x)
             py = r * (plot_d + road_w_y)
             bx = px + (plot_w - b_w) / 2
             by = py + (plot_d - b_d) / 2
-            building_walls.append((bx + b_w * 0.25, by))
  
-            traces.append(make_box_mesh(px, py, -0.05, plot_w, plot_d, 0.05, soil_color, 0.5))
+            # connect from whichever wall faces this row's street (south wall normally,
+            # north wall for the last row, which shares the road before it)
+            wall_y = by + b_d if r < rows - 1 else by
+            building_walls.append((r, bx + b_w * 0.25, wall_y))
+ 
+            traces.append(make_box_mesh(px, py, -0.05, plot_w, plot_d, 0.05, soil_color, 0.55))  # yard
             traces.append(make_box_mesh(bx, by, 0, b_w, b_d, floor_h * floors_here, color, 0.97))
             traces.append(make_box_edges(bx, by, 0, b_w, b_d, floor_h * floors_here))
-            # only add window strips once the building is wide enough for them to read as
-            # windows rather than stripes covering the whole face
             if b_w >= 3.0:
                 for lvl in range(floors_here):
                     traces += make_window_band(bx, by, b_w, b_d, lvl * floor_h, floor_h * 0.94)
@@ -645,32 +676,38 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
             traces.append(make_box_mesh(bx-0.1, by-0.1, roof_z, b_w+0.2, b_d+0.2, 0.25, "#565048", 0.97))
             traces.append(make_label(bx + b_w/2, by + b_d/2, floor_h * floors_here + 1.2, btype))
  
-    # main sewer trunk line running along the two spine roads (a "+" shape), plus outfall
-    mid_x, mid_y = total_length / 2 - road_w_x/2, total_width / 2 - road_w_y/2
-    traces.append(go.Scatter3d(x=[0, total_length], y=[mid_y, mid_y], z=[trunk_z, trunk_z],
-                                mode="lines", line=dict(color=DRAINAGE_COLOR, width=10), showlegend=False, hoverinfo="skip"))
-    traces.append(go.Scatter3d(x=[mid_x, mid_x], y=[0, total_width], z=[trunk_z, trunk_z],
-                                mode="lines", line=dict(color=DRAINAGE_COLOR, width=10), showlegend=False, hoverinfo="skip"))
-    traces.append(go.Scatter3d(x=[total_length, outfall[0]], y=[mid_y, outfall[1]], z=[trunk_z, outfall[2]],
-                                mode="lines", line=dict(color=DRAINAGE_COLOR, width=10), showlegend=False, hoverinfo="skip"))
+    # --- drainage network: house riser -> row street sewer -> trunk main -> outfall ---
+    street_z, trunk_z = -1.0, -1.7
+    if rows >= 2:
+        street_y = [min(r, rows - 2) * (plot_d + road_w_y) + plot_d + road_w_y / 2 for r in range(rows)]
+    else:
+        street_y = [plot_d + road_w_y]  # virtual street line for a single-row layout
+ 
+    trunk_x = total_length + 2.5
+    unique_streets = sorted(set(street_y))
+    for sy in unique_streets:
+        traces.append(go.Scatter3d(x=[0, trunk_x], y=[sy, sy], z=[street_z, street_z],
+                                    mode="lines", line=dict(color=DRAINAGE_COLOR, width=8), showlegend=False, hoverinfo="skip"))
+        traces.append(go.Scatter3d(x=[trunk_x, trunk_x], y=[sy, sy], z=[street_z, trunk_z],
+                                    mode="lines", line=dict(color=DRAINAGE_COLOR, width=8), showlegend=False, hoverinfo="skip"))
+        traces.append(make_box_mesh(trunk_x-0.4, sy-0.4, trunk_z-0.15, 0.8, 0.8, 0.3, "#2e3a44", 0.95))
+ 
+    outfall = (trunk_x + 2.0, unique_streets[len(unique_streets)//2], trunk_z - 1.0)
+    traces.append(go.Scatter3d(x=[trunk_x]*2, y=[min(unique_streets), max(unique_streets)], z=[trunk_z, trunk_z],
+                                mode="lines", line=dict(color=DRAINAGE_COLOR, width=13), showlegend=False, hoverinfo="skip"))
+    traces.append(go.Scatter3d(x=[trunk_x, outfall[0]], y=[outfall[1], outfall[1]], z=[trunk_z, outfall[2]],
+                                mode="lines", line=dict(color=DRAINAGE_COLOR, width=13), showlegend=False, hoverinfo="skip"))
     traces.append(make_box_mesh(outfall[0]-0.8, outfall[1]-0.8, outfall[2]-0.8, 1.6, 1.6, 1.0, TANK_COLOR, 0.95))
     traces.append(make_label(outfall[0], outfall[1], outfall[2]+1.2, "Outfall / main sewer connection"))
+    traces.append(make_label(trunk_x, sum(unique_streets)/len(unique_streets), floor_h*max(BUILD_FLOORS.values())+3, "Trunk main (deepens toward outfall)"))
  
-    # drainage from every building (house, hospital, or office): a short visible riser
-    # touching the building's exterior wall, then a lateral run down to the trunk line —
-    # so the pipe actually reads as connected to the building, not floating near it
-    for (wx, wy) in building_walls:
-        traces.append(go.Scatter3d(
-            x=[wx, wx], y=[wy, wy], z=[1.6, -0.5],
-            mode="lines", line=dict(color=DRAINAGE_COLOR, width=9), showlegend=False, hoverinfo="skip",
-        ))
+    for (r, wx, wy) in building_walls:
+        sy = street_y[r]
+        traces.append(go.Scatter3d(x=[wx, wx], y=[wy, wy], z=[1.6, -0.5],
+                                    mode="lines", line=dict(color=DRAINAGE_COLOR, width=9), showlegend=False, hoverinfo="skip"))
         traces.append(make_box_mesh(wx-0.18, wy-0.18, -0.65, 0.36, 0.36, 0.25, "#2e3a44", 0.95))
-        traces.append(go.Scatter3d(
-            x=[wx, wx], y=[wy, mid_y], z=[-0.5, trunk_z],
-            mode="lines", line=dict(color=DRAINAGE_COLOR, width=7), showlegend=False, hoverinfo="skip",
-        ))
- 
-    traces.append(make_label(total_length/2, total_width/2, floor_h*max(BUILD_FLOORS.values()) + 3, "Main sewer trunk line"))
+        traces.append(go.Scatter3d(x=[wx, wx], y=[wy, sy], z=[-0.5, street_z],
+                                    mode="lines", line=dict(color=DRAINAGE_COLOR, width=6), showlegend=False, hoverinfo="skip"))
  
     fig = go.Figure(data=traces)
     fig.update_layout(
