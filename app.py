@@ -540,7 +540,7 @@ def make_drainage_traces(footprint, length, width):
         mode="lines", line=dict(color=DRAINAGE_COLOR, width=11), showlegend=False, hoverinfo="skip",
     ))
     # small pipe collar where the riser meets the ground, for a finished look
-    traces.append(make_box_mesh(outlet[0]-0.2, outlet[1]-0.2, -0.15, 0.4, 0.4, 0.3, "#2e3a44", 0.95))
+    traces.append(make_box_mesh(outlet[0]-0.2, outlet[1]-0.2, -0.15, 0.4, 0.4, 0.3, "#123a5c", 0.95))
     traces.append(make_label(riser_top[0], riser_top[1] - 0.6, riser_top[2] + 0.5, "Drain pipe (from building)"))
  
     # segment 1: building outlet -> manhole bend, just outside the footprint
@@ -548,7 +548,7 @@ def make_drainage_traces(footprint, length, width):
         x=[outlet[0], bend[0]], y=[outlet[1], bend[1]], z=[outlet[2], bend[2]],
         mode="lines", line=dict(color=DRAINAGE_COLOR, width=11), showlegend=False, hoverinfo="skip",
     ))
-    traces.append(make_box_mesh(bend[0]-0.35, bend[1]-0.35, bend[2]-0.15, 0.7, 0.7, 0.3, "#2e3a44", 0.95))
+    traces.append(make_box_mesh(bend[0]-0.35, bend[1]-0.35, bend[2]-0.15, 0.7, 0.7, 0.3, "#123a5c", 0.95))
     traces.append(make_box_edges(bend[0]-0.35, bend[1]-0.35, bend[2]-0.15, 0.7, 0.7, 0.3))
  
     # segment 2: manhole -> septic tank / soak pit
@@ -569,27 +569,29 @@ def compute_footprint_bbox(footprint):
  
  
 def make_building_stacks(footprint, floors, floor_height):
-    """Internal soil-pipe stacks: one vertical stack per wing of the building (two for
-    large wings), each with a short branch stub at every floor (representing a bathroom/
-    kitchen connection), running down to the same exterior outlet used by the outdoor
-    drain run. This is what makes the drainage read as a real building plumbing system
-    rather than a single pipe from one corner."""
+    """Internal soil-pipe stacks, run exposed on the building's exterior wall (as is common
+    on real buildings) — one stack per wing (two for large wings), each with a short branch
+    stub at every floor representing a bathroom/kitchen connection, running down to the same
+    exterior outlet used by the outdoor drain run. Placing the stack on the outside of the
+    wall (rather than inside the footprint) is what makes it actually visible instead of
+    hidden behind the opaque building mass."""
     x_min, x_max, y_min, y_max = compute_footprint_bbox(footprint)
     wall_x = x_min + (x_max - x_min) * 0.2
     outlet = (wall_x, y_min, -0.7)
-    center_x = (x_min + x_max) / 2
  
+    # (x, y, branch_direction) — branch_direction is the y-step from the stack, back into
+    # the building, so only the short T-fitting is visible and the rest reads as "inside"
     stack_points = []
     for (x0, y0, dx, dy) in footprint:
-        stack_points.append((x0 + dx * 0.15, y0 + dy * 0.15))
+        stack_points.append((x0 + dx * 0.25, y0 - 0.35, 1))
         if dx > 9 or dy > 9:
-            stack_points.append((x0 + dx * 0.85, y0 + dy * 0.85))
+            stack_points.append((x0 + dx * 0.75, y0 + dy + 0.35, -1))
  
     base_traces = []
     per_floor_traces = {lvl: [] for lvl in range(floors)}
+    fitting_color = "#123a5c"  # dark blue, reads as part of the network rather than a generic black box
  
-    for (sx, sy) in stack_points:
-        direction = 1 if sx < center_x else -1
+    for (sx, sy, branch_dir) in stack_points:
         base_traces.append(go.Scatter3d(
             x=[sx, outlet[0]], y=[sy, outlet[1]], z=[-0.4, outlet[2]],
             mode="lines", line=dict(color=DRAINAGE_COLOR, width=6), showlegend=False, hoverinfo="skip",
@@ -597,21 +599,21 @@ def make_building_stacks(footprint, floors, floor_height):
         for lvl in range(floors):
             z0 = lvl * floor_height
             z_branch = z0 + floor_height * 0.5
-            branch_dx = direction * 1.0
+            branch_dy = branch_dir * 0.9
             per_floor_traces[lvl].append(go.Scatter3d(
                 x=[sx, sx], y=[sy, sy], z=[z0, z0 + floor_height * 0.94],
-                mode="lines", line=dict(color=DRAINAGE_COLOR, width=5), showlegend=False, hoverinfo="skip",
+                mode="lines", line=dict(color=DRAINAGE_COLOR, width=6), showlegend=False, hoverinfo="skip",
             ))
             per_floor_traces[lvl].append(go.Scatter3d(
-                x=[sx, sx + branch_dx], y=[sy, sy], z=[z_branch, z_branch],
-                mode="lines", line=dict(color=DRAINAGE_COLOR, width=4), showlegend=False, hoverinfo="skip",
+                x=[sx, sx], y=[sy, sy + branch_dy], z=[z_branch, z_branch],
+                mode="lines", line=dict(color=DRAINAGE_COLOR, width=5), showlegend=False, hoverinfo="skip",
             ))
             per_floor_traces[lvl].append(make_box_mesh(
-                sx + branch_dx - 0.14, sy - 0.14, z_branch - 0.14, 0.28, 0.28, 0.28, "#0d3b66", 0.92
+                sx - 0.14, sy + branch_dy - 0.14, z_branch - 0.14, 0.28, 0.28, 0.28, fitting_color, 0.95
             ))
  
     if stack_points:
-        base_traces.append(make_label(stack_points[0][0], stack_points[0][1] - 1.2, floor_height * 0.5, "Soil pipe stack"))
+        base_traces.append(make_label(stack_points[0][0], stack_points[0][1] - 1.2, floor_height * 0.5, "Soil pipe stack (exterior)"))
     return base_traces, per_floor_traces
  
  
@@ -789,7 +791,7 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
                                     mode="lines", line=dict(color=DRAINAGE_COLOR, width=8), showlegend=False, hoverinfo="skip"))
         traces.append(go.Scatter3d(x=[trunk_x, trunk_x], y=[sy, sy], z=[street_z, trunk_z],
                                     mode="lines", line=dict(color=DRAINAGE_COLOR, width=8), showlegend=False, hoverinfo="skip"))
-        traces.append(make_box_mesh(trunk_x-0.4, sy-0.4, trunk_z-0.15, 0.8, 0.8, 0.3, "#2e3a44", 0.95))
+        traces.append(make_box_mesh(trunk_x-0.4, sy-0.4, trunk_z-0.15, 0.8, 0.8, 0.3, "#123a5c", 0.95))
  
     outfall = (trunk_x + 2.0, unique_streets[len(unique_streets)//2], trunk_z - 1.0)
     traces.append(go.Scatter3d(x=[trunk_x]*2, y=[min(unique_streets), max(unique_streets)], z=[trunk_z, trunk_z],
@@ -804,7 +806,7 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
         sy = street_y[r]
         traces.append(go.Scatter3d(x=[wx, wx], y=[wy, wy], z=[1.6, -0.5],
                                     mode="lines", line=dict(color=DRAINAGE_COLOR, width=9), showlegend=False, hoverinfo="skip"))
-        traces.append(make_box_mesh(wx-0.18, wy-0.18, -0.65, 0.36, 0.36, 0.25, "#2e3a44", 0.95))
+        traces.append(make_box_mesh(wx-0.18, wy-0.18, -0.65, 0.36, 0.36, 0.25, "#123a5c", 0.95))
         traces.append(go.Scatter3d(x=[wx, wx], y=[wy, sy], z=[-0.5, street_z],
                                     mode="lines", line=dict(color=DRAINAGE_COLOR, width=6), showlegend=False, hoverinfo="skip"))
  
