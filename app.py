@@ -469,21 +469,36 @@ def make_foundation_traces(footprint, foundation_type, depth, fnd_color="#767065
  
  
 def make_drainage_traces(footprint, length, width):
-    """Sewer connection from the building to a soak pit / septic tank at the plot edge, drawn
-    as two visible pipe segments with a manhole at the bend. Uses the full footprint bounding
-    box (not just one rectangle), so it clears the building even for L/U-shaped layouts like
-    a school. Schematic, not a hydraulic design."""
+    """Sewer connection from the building to a soak pit / septic tank at the plot edge.
+    Includes a vertical riser pipe running up the building's exterior wall (so the drain
+    visibly connects to the structure, not just appears floating near it), then the buried
+    run out to a manhole and septic tank. Uses the full footprint bounding box (not just one
+    rectangle), so it clears the building even for L/U-shaped layouts like a school.
+    Schematic, not a hydraulic design."""
     traces = []
     xs = [p[0] for p in footprint] + [p[0] + p[2] for p in footprint]
     ys = [p[1] for p in footprint] + [p[1] + p[3] for p in footprint]
     x_min, x_max = min(xs), max(xs)
     y_min, y_max = min(ys), max(ys)
  
-    outlet = (x_min + (x_max - x_min) * 0.2, y_min, -0.7)
+    wall_x = x_min + (x_max - x_min) * 0.2
+    riser_top = (wall_x, y_min, 2.3)
+    outlet = (wall_x, y_min, -0.7)
     bend = (outlet[0], y_min - max(3.0, width * 0.25), -1.1)
     tank_size = 1.8
     tank_x, tank_y = bend[0] - tank_size/2, bend[1] - max(3.0, width * 0.2)
     tank_top = -1.4
+ 
+    # riser: visible pipe running up the building's exterior wall, from just below the
+    # ground line up past the first floor — this is what makes the drain read as "plumbed
+    # into the building" rather than a disconnected line floating nearby.
+    traces.append(go.Scatter3d(
+        x=[riser_top[0], outlet[0]], y=[riser_top[1], outlet[1]], z=[riser_top[2], outlet[2]],
+        mode="lines", line=dict(color=DRAINAGE_COLOR, width=11), showlegend=False, hoverinfo="skip",
+    ))
+    # small pipe collar where the riser meets the ground, for a finished look
+    traces.append(make_box_mesh(outlet[0]-0.2, outlet[1]-0.2, -0.15, 0.4, 0.4, 0.3, "#2e3a44", 0.95))
+    traces.append(make_label(riser_top[0], riser_top[1] - 0.6, riser_top[2] + 0.5, "Drain pipe (from building)"))
  
     # segment 1: building outlet -> manhole bend, just outside the footprint
     traces.append(go.Scatter3d(
@@ -501,7 +516,6 @@ def make_drainage_traces(footprint, length, width):
     traces.append(make_box_mesh(tank_x, tank_y, tank_top - 1.6, tank_size, tank_size, 1.6, TANK_COLOR, 0.95))
     traces.append(make_box_edges(tank_x, tank_y, tank_top - 1.6, tank_size, tank_size, 1.6))
     traces.append(make_label(tank_x + tank_size/2, tank_y + tank_size/2, 0.9, "Septic tank / soak pit"))
-    traces.append(make_label((outlet[0]+bend[0])/2, (outlet[1]+bend[1])/2, 0.7, "Drain pipe"))
     return traces
  
  
@@ -568,12 +582,15 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
 def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_floors, soil_color, structural_system):
     """Conceptual mixed-use town layout: a grid of plots — mostly houses, with a hospital
     and office block worked in when the grid is big enough — separated by roads, with a
-    schematic sewer network: a main trunk line under the roads collecting every building's
-    lateral connection, running to a single outfall. Planning-level sketch, not a hydraulic
-    design (no pipe sizing, slopes, or flow calculations)."""
-    road_w = 4.0
-    plot_w = (total_length - (houses_per_row - 1) * road_w) / houses_per_row
-    plot_d = (total_width - (rows - 1) * road_w) / rows
+    schematic sewer network: a main trunk line under the roads, a riser pipe visibly
+    touching each building's wall, then a lateral run to the trunk, ending at a single
+    outfall. Planning-level sketch, not a hydraulic design (no pipe sizing/slopes/flows)."""
+    # road width scales down for smaller plots or bigger grids, so plots never shrink to
+    # near-nothing (which was turning houses into thin stretched-out pillars)
+    road_w_x = max(1.2, min(4.0, total_length / (houses_per_row * 3)))
+    road_w_y = max(1.2, min(4.0, total_width / (rows * 3)))
+    plot_w = max(3.0, (total_length - (houses_per_row - 1) * road_w_x) / houses_per_row)
+    plot_d = max(3.0, (total_width - (rows - 1) * road_w_y) / rows)
     floor_h = 3.0
     total_plots = houses_per_row * rows
  
@@ -596,7 +613,7 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
     trunk_z = -1.4
     outfall = (total_length + 2.0, total_width / 2, trunk_z - 0.6)
  
-    building_centers = []
+    building_walls = []  # (wall_x, wall_y) for each building's drain riser point
     counts = {"House": 0, "Hospital": 0, "Office": 0}
     idx = 0
     for r in range(rows):
@@ -606,26 +623,30 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
             counts[btype] += 1
             floors_here = BUILD_FLOORS[btype]
             color = BUILD_COLOR[btype]
-            shrink = 0.55 if btype in ("Hospital", "Office") else 0.65
+            # buildings fill most of their plot now — chunky massing instead of thin towers
+            shrink = 0.72 if btype in ("Hospital", "Office") else 0.8
             b_w, b_d = plot_w * shrink, plot_d * shrink
  
-            px = c * (plot_w + road_w)
-            py = r * (plot_d + road_w)
+            px = c * (plot_w + road_w_x)
+            py = r * (plot_d + road_w_y)
             bx = px + (plot_w - b_w) / 2
             by = py + (plot_d - b_d) / 2
-            building_centers.append((bx + b_w/2, by + b_d/2))
+            building_walls.append((bx + b_w * 0.25, by))
  
             traces.append(make_box_mesh(px, py, -0.05, plot_w, plot_d, 0.05, soil_color, 0.5))
             traces.append(make_box_mesh(bx, by, 0, b_w, b_d, floor_h * floors_here, color, 0.97))
             traces.append(make_box_edges(bx, by, 0, b_w, b_d, floor_h * floors_here))
-            for lvl in range(floors_here):
-                traces += make_window_band(bx, by, b_w, b_d, lvl * floor_h, floor_h * 0.94)
+            # only add window strips once the building is wide enough for them to read as
+            # windows rather than stripes covering the whole face
+            if b_w >= 3.0:
+                for lvl in range(floors_here):
+                    traces += make_window_band(bx, by, b_w, b_d, lvl * floor_h, floor_h * 0.94)
             roof_z = floor_h * floors_here
             traces.append(make_box_mesh(bx-0.1, by-0.1, roof_z, b_w+0.2, b_d+0.2, 0.25, "#565048", 0.97))
             traces.append(make_label(bx + b_w/2, by + b_d/2, floor_h * floors_here + 1.2, btype))
  
     # main sewer trunk line running along the two spine roads (a "+" shape), plus outfall
-    mid_x, mid_y = total_length / 2 - road_w/2, total_width / 2 - road_w/2
+    mid_x, mid_y = total_length / 2 - road_w_x/2, total_width / 2 - road_w_y/2
     traces.append(go.Scatter3d(x=[0, total_length], y=[mid_y, mid_y], z=[trunk_z, trunk_z],
                                 mode="lines", line=dict(color=DRAINAGE_COLOR, width=10), showlegend=False, hoverinfo="skip"))
     traces.append(go.Scatter3d(x=[mid_x, mid_x], y=[0, total_width], z=[trunk_z, trunk_z],
@@ -635,11 +656,18 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
     traces.append(make_box_mesh(outfall[0]-0.8, outfall[1]-0.8, outfall[2]-0.8, 1.6, 1.6, 1.0, TANK_COLOR, 0.95))
     traces.append(make_label(outfall[0], outfall[1], outfall[2]+1.2, "Outfall / main sewer connection"))
  
-    # lateral drainage connection from every building (house, hospital, or office) to the nearest spine line
-    for (bx, by) in building_centers:
+    # drainage from every building (house, hospital, or office): a short visible riser
+    # touching the building's exterior wall, then a lateral run down to the trunk line —
+    # so the pipe actually reads as connected to the building, not floating near it
+    for (wx, wy) in building_walls:
         traces.append(go.Scatter3d(
-            x=[bx, bx], y=[by, mid_y], z=[-0.6, trunk_z],
-            mode="lines", line=dict(color=DRAINAGE_COLOR, width=6), showlegend=False, hoverinfo="skip",
+            x=[wx, wx], y=[wy, wy], z=[1.6, -0.5],
+            mode="lines", line=dict(color=DRAINAGE_COLOR, width=9), showlegend=False, hoverinfo="skip",
+        ))
+        traces.append(make_box_mesh(wx-0.18, wy-0.18, -0.65, 0.36, 0.36, 0.25, "#2e3a44", 0.95))
+        traces.append(go.Scatter3d(
+            x=[wx, wx], y=[wy, mid_y], z=[-0.5, trunk_z],
+            mode="lines", line=dict(color=DRAINAGE_COLOR, width=7), showlegend=False, hoverinfo="skip",
         ))
  
     traces.append(make_label(total_length/2, total_width/2, floor_h*max(BUILD_FLOORS.values()) + 3, "Main sewer trunk line"))
