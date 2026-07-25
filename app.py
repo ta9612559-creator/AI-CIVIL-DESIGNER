@@ -245,10 +245,16 @@ def recommend(soil_name, floors, purpose, seismic_zone, groundwater, length, wid
     if aspect_ratio > 2.5:
         shapes = ["Rectangular"]
         warnings.append("Plot is quite elongated; avoid irregular shapes to limit torsional effects during earthquakes.")
-    elif purpose in ("school", "hospital"):
-        shapes = ["U-shaped", "L-shaped", "Rectangular"]
+    elif purpose in ("hospital",):
+        shapes = ["H-shaped", "Courtyard", "U-shaped", "Cross-shaped", "Rectangular"]
+        explanation.append("H-shaped, courtyard, and cross layouts give more perimeter wall for natural light and ventilation into every ward — valuable for a hospital.")
+    elif purpose == "school":
+        shapes = ["U-shaped", "Courtyard", "H-shaped", "L-shaped", "Rectangular"]
+        explanation.append("U-shaped and courtyard layouts let classrooms open onto a shared yard, a common school planning pattern.")
+    elif purpose == "office":
+        shapes = ["Rectangular", "Square", "T-shaped", "L-shaped", "Cross-shaped"]
     else:
-        shapes = ["Rectangular", "Square", "L-shaped"]
+        shapes = ["Rectangular", "Square", "L-shaped", "T-shaped"]
  
     if seismic_zone in ("High", "Severe"):
         shapes = [s for s in shapes if s in ("Rectangular", "Square")] or ["Rectangular"]
@@ -271,8 +277,10 @@ def recommend(soil_name, floors, purpose, seismic_zone, groundwater, length, wid
 def get_footprint(shape, length, width):
     if shape in ("Rectangular", "Square"):
         return [(0, 0, length, width)]
+ 
     if shape == "L-shaped":
         return [(0, 0, length, width * 0.55), (0, width * 0.55, length * 0.45, width * 0.45)]
+ 
     if shape == "U-shaped":
         arm_w = width * 0.3
         return [
@@ -280,6 +288,41 @@ def get_footprint(shape, length, width):
             (0, arm_w, arm_w, width - arm_w),
             (length - arm_w, arm_w, arm_w, width - arm_w),
         ]
+ 
+    if shape == "T-shaped":
+        bar_h = width * 0.32
+        stem_w = length * 0.32
+        return [
+            (0, width - bar_h, length, bar_h),                              # top cross-bar
+            (length/2 - stem_w/2, 0, stem_w, width - bar_h),                # stem
+        ]
+ 
+    if shape == "H-shaped":
+        leg_w = length * 0.25
+        bar_h = width * 0.24
+        return [
+            (0, 0, leg_w, width),                                          # left leg
+            (length - leg_w, 0, leg_w, width),                             # right leg
+            (leg_w, width/2 - bar_h/2, length - 2*leg_w, bar_h),           # connecting bar
+        ]
+ 
+    if shape == "Cross-shaped":
+        bar_h = width * 0.32
+        bar_w = length * 0.32
+        return [
+            (0, width/2 - bar_h/2, length, bar_h),                         # horizontal bar
+            (length/2 - bar_w/2, 0, bar_w, width),                         # vertical bar
+        ]
+ 
+    if shape == "Courtyard":
+        t = min(length, width) * 0.24  # wing thickness, open courtyard in the middle
+        return [
+            (0, 0, length, t),                                            # front wing
+            (0, width - t, length, t),                                    # back wing
+            (0, t, t, width - 2*t),                                       # left wing
+            (length - t, t, t, width - 2*t),                              # right wing
+        ]
+ 
     return [(0, 0, length, width)]
  
  
@@ -519,6 +562,59 @@ def make_drainage_traces(footprint, length, width):
     return traces
  
  
+def compute_footprint_bbox(footprint):
+    xs = [p[0] for p in footprint] + [p[0] + p[2] for p in footprint]
+    ys = [p[1] for p in footprint] + [p[1] + p[3] for p in footprint]
+    return min(xs), max(xs), min(ys), max(ys)
+ 
+ 
+def make_building_stacks(footprint, floors, floor_height):
+    """Internal soil-pipe stacks: one vertical stack per wing of the building (two for
+    large wings), each with a short branch stub at every floor (representing a bathroom/
+    kitchen connection), running down to the same exterior outlet used by the outdoor
+    drain run. This is what makes the drainage read as a real building plumbing system
+    rather than a single pipe from one corner."""
+    x_min, x_max, y_min, y_max = compute_footprint_bbox(footprint)
+    wall_x = x_min + (x_max - x_min) * 0.2
+    outlet = (wall_x, y_min, -0.7)
+    center_x = (x_min + x_max) / 2
+ 
+    stack_points = []
+    for (x0, y0, dx, dy) in footprint:
+        stack_points.append((x0 + dx * 0.15, y0 + dy * 0.15))
+        if dx > 9 or dy > 9:
+            stack_points.append((x0 + dx * 0.85, y0 + dy * 0.85))
+ 
+    base_traces = []
+    per_floor_traces = {lvl: [] for lvl in range(floors)}
+ 
+    for (sx, sy) in stack_points:
+        direction = 1 if sx < center_x else -1
+        base_traces.append(go.Scatter3d(
+            x=[sx, outlet[0]], y=[sy, outlet[1]], z=[-0.4, outlet[2]],
+            mode="lines", line=dict(color=DRAINAGE_COLOR, width=6), showlegend=False, hoverinfo="skip",
+        ))
+        for lvl in range(floors):
+            z0 = lvl * floor_height
+            z_branch = z0 + floor_height * 0.5
+            branch_dx = direction * 1.0
+            per_floor_traces[lvl].append(go.Scatter3d(
+                x=[sx, sx], y=[sy, sy], z=[z0, z0 + floor_height * 0.94],
+                mode="lines", line=dict(color=DRAINAGE_COLOR, width=5), showlegend=False, hoverinfo="skip",
+            ))
+            per_floor_traces[lvl].append(go.Scatter3d(
+                x=[sx, sx + branch_dx], y=[sy, sy], z=[z_branch, z_branch],
+                mode="lines", line=dict(color=DRAINAGE_COLOR, width=4), showlegend=False, hoverinfo="skip",
+            ))
+            per_floor_traces[lvl].append(make_box_mesh(
+                sx + branch_dx - 0.14, sy - 0.14, z_branch - 0.14, 0.28, 0.28, 0.28, "#0d3b66", 0.92
+            ))
+ 
+    if stack_points:
+        base_traces.append(make_label(stack_points[0][0], stack_points[0][1] - 1.2, floor_height * 0.5, "Soil pipe stack"))
+    return base_traces, per_floor_traces
+ 
+ 
 def build_3d_animated_figure(shape, length, width, floors, structural_system, soil_color, foundation_type, depth):
     floor_height = 3.0
     color = STRUCT_COLOR.get(structural_system, "#8c9aa8")
@@ -528,7 +624,8 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
     soil_block = soil_block_trace(footprint, depth, soil_color)
     foundation = make_foundation_traces(footprint, foundation_type, depth)
     drainage = make_drainage_traces(footprint, length, width)
-    base_layer = [soil_block] + foundation + ground + drainage
+    stacks_base, stacks_per_floor = make_building_stacks(footprint, floors, floor_height)
+    base_layer = [soil_block] + foundation + ground + drainage + stacks_base
  
     frames = []
     for f in range(1, floors + 1):
@@ -542,6 +639,8 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
                 frame_data += make_window_band(x0, y0, dx, dy, z0, floor_height * 0.94)
             # ring beam at the base of each floor, supporting the slab above
             frame_data += make_perimeter_beams(footprint, z0, z0 + 0.35, beam_w=0.4, color=beam_color)
+            # internal plumbing stack segment + floor branch for this level
+            frame_data += stacks_per_floor[lvl]
         # roof cap / parapet on the top floor for a finished look
         roof_z = f * floor_height
         for (x0, y0, dx, dy) in footprint:
@@ -1064,3 +1163,4 @@ else:
         system, animated 3D model, and plan/elevation/section drawings.</div>
     </div>
     """, unsafe_allow_html=True)
+ 
