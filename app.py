@@ -680,17 +680,21 @@ def build_3d_animated_figure(shape, length, width, floors, structural_system, so
     return fig
  
  
-def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_floors, soil_color, structural_system):
+def build_town_3d_figure(plot_length, plot_width, houses_per_row, rows, house_floors, soil_color, structural_system):
     """Conceptual mixed-use town layout: houses/hospital/office set back on plots beside
-    real road surfaces (not sitting on top of them), a few parked cars for scale, and a
-    proper branching sewer network — each building's riser feeds a street sewer line for
-    its row, every street line feeds one trunk main, and the trunk gets deeper as it runs
-    toward a single outfall, the way a real gravity sewer is graded. Planning-level sketch,
-    not a hydraulic design (no pipe sizing/slope calculations)."""
-    road_w_x = max(2.2, min(5.0, total_length / (houses_per_row * 2.5)))
-    road_w_y = max(2.2, min(5.0, total_width / (rows * 2.5)))
-    plot_w = max(3.0, (total_length - (houses_per_row - 1) * road_w_x) / houses_per_row)
-    plot_d = max(3.0, (total_width - (rows - 1) * road_w_y) / rows)
+    real road surfaces (not sitting on top of them), a few parked cars for scale, street
+    lights, and a proper branching sewer network — each building's riser feeds a street
+    sewer line for its row, every street line feeds one trunk main, and the trunk gets
+    deeper as it runs toward a single outfall, the way a real gravity sewer is graded.
+    plot_length/plot_width are the size of ONE house's plot (not the whole town) — the
+    total town footprint is derived from the grid count, so plots stay a realistic size
+    no matter how many houses per row or rows are requested. Planning-level sketch, not a
+    hydraulic design (no pipe sizing/slope calculations)."""
+    plot_w = max(6.0, plot_length)
+    plot_d = max(6.0, plot_width)
+    road_w_x, road_w_y = 6.0, 6.0  # fixed, realistic road width — a real street, not a squeezed gap
+    total_length = houses_per_row * plot_w + (houses_per_row - 1) * road_w_x
+    total_width = rows * plot_d + (rows - 1) * road_w_y
     floor_h = 3.0
     total_plots = houses_per_row * rows
  
@@ -1049,6 +1053,8 @@ with st.sidebar:
         houses_per_row = st.slider("Houses per row", 2, 12, 4)
         town_rows = st.slider("Number of rows", 1, 8, 3)
         house_floors = st.slider("Floors per house", 1, 3, 2)
+        town_plot_length = st.number_input("House plot length (m)", min_value=6.0, value=10.0, step=1.0)
+        town_plot_width = st.number_input("House plot width (m)", min_value=6.0, value=8.0, step=1.0)
     seismic_zone = st.selectbox("Earthquake zone", ["Low", "Moderate", "High", "Severe"])
     groundwater = st.selectbox("Groundwater level", ["High (< 2m)", "Moderate (2-5m)", "Low (> 5m)"])
     run = st.button("Get Recommendation", type="primary", use_container_width=True)
@@ -1062,8 +1068,8 @@ if run and purpose == "town / housing society":
         "design — actual pipe sizing, slopes, and manhole spacing must follow local drainage codes."
     )
     # rough structural system guess for the town's houses, from soil + seismic zone
-    town_result = recommend(soil_name, house_floors, "house", seismic_zone, groundwater, length, width)
-    fig_town, type_counts = build_town_3d_figure(length, width, houses_per_row, town_rows, house_floors, soil_color, town_result["structural_system"])
+    town_result = recommend(soil_name, house_floors, "house", seismic_zone, groundwater, town_plot_length, town_plot_width)
+    fig_town, type_counts = build_town_3d_figure(town_plot_length, town_plot_width, houses_per_row, town_rows, house_floors, soil_color, town_result["structural_system"])
     st.plotly_chart(
         fig_town, use_container_width=True,
         config={"displayModeBar": True, "displaylogo": False, "scrollZoom": True},
@@ -1081,7 +1087,7 @@ if run and purpose == "town / housing society":
     rc1.metric("Foundation (typical)", town_result["foundation"])
     rc2.metric("Structural System (typical)", town_result["structural_system"])
  
-    footprint_for_cost = [(0, 0, (length / houses_per_row) * 0.65, (width / town_rows) * 0.65)]
+    footprint_for_cost = [(0, 0, town_plot_length * 0.72, town_plot_width * 0.72)]
     est = estimate_cost_and_materials(footprint_for_cost, house_floors, town_result["structural_system"], town_result["foundation"])
     st.subheader("Estimated Cost (per house / total)")
     tc4b, tc5, tc6 = st.columns(3)
