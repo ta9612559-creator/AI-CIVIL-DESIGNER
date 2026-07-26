@@ -743,6 +743,25 @@ def build_town_3d_figure(total_length, total_width, houses_per_row, rows, house_
         traces.append(make_box_edges(cx, cy, 0.05, 1.6, 3.6, 1.3))
         car_idx += 1
  
+    # --- street lights: a few posts along every road, on the side opposite the parked cars ---
+    def make_street_light(x, y, pole_h=5.0):
+        return [
+            make_box_mesh(x-0.09, y-0.09, 0, 0.18, 0.18, pole_h, "#3a3a3a", 0.97),
+            make_box_mesh(x-0.3, y-0.3, pole_h, 0.6, 0.6, 0.25, "#f2d675", 0.9),
+        ]
+ 
+    light_fracs = [0.15, 0.5, 0.85]
+    for r in range(rows - 1):
+        road_y0 = r * (plot_d + road_w_y) + plot_d
+        ly = road_y0 + road_w_y * 0.2
+        for frac in light_fracs:
+            traces += make_street_light(total_length * frac, ly)
+    for c in range(houses_per_row - 1):
+        road_x0 = c * (plot_w + road_w_x) + plot_w
+        lx = road_x0 + road_w_x * 0.2
+        for frac in light_fracs:
+            traces += make_street_light(lx, total_width * frac)
+ 
     # --- buildings, set back on their plots beside the roads ---
     building_walls = []  # (row_index, wall_x, wall_y) — the wall facing this row's street sewer
     counts = {"House": 0, "Hospital": 0, "Office": 0}
@@ -1027,8 +1046,8 @@ with st.sidebar:
     floors = st.slider("Number of floors", 1, 15, 3)
     purpose = st.selectbox("Building purpose", ["house", "school", "hospital", "office", "warehouse", "town / housing society"])
     if purpose == "town / housing society":
-        houses_per_row = st.slider("Houses per row", 2, 6, 3)
-        town_rows = st.slider("Number of rows", 1, 4, 2)
+        houses_per_row = st.slider("Houses per row", 2, 12, 4)
+        town_rows = st.slider("Number of rows", 1, 8, 3)
         house_floors = st.slider("Floors per house", 1, 3, 2)
     seismic_zone = st.selectbox("Earthquake zone", ["Low", "Moderate", "High", "Severe"])
     groundwater = st.selectbox("Groundwater level", ["High (< 2m)", "Moderate (2-5m)", "Low (> 5m)"])
@@ -1165,4 +1184,5 @@ else:
         system, animated 3D model, and plan/elevation/section drawings.</div>
     </div>
     """, unsafe_allow_html=True)
+ 
  
